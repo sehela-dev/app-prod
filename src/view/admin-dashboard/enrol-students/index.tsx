@@ -107,6 +107,7 @@ export const EnrollStudentView = () => {
             customer_name: customerData?.name,
             customer_phone: customerData?.phone,
             customer_email: customerData?.email,
+            branch: customerData?.branch,
           }),
         status: "paid",
 
