@@ -12,6 +12,7 @@ import { useGetCustomers } from "@/hooks/api/queries/admin/customers";
 import { useGetThirdPartyApp } from "@/hooks/api/queries/admin/orders/use-get-third-party";
 import { ICustomerData } from "@/types/customers.interface";
 import { IThirdPartyApp } from "@/types/orders.interface";
+import { SEHELA_BRANCH } from "@/constants/sample-data";
 
 // import { useCreateNewGuest } from "@/hooks/api/mutations/admin";
 import { useCallback, useState } from "react";
@@ -35,6 +36,7 @@ const defaultValues = {
   email: "",
   third_party_id: "",
   booking_id: "",
+  branch: "",
 };
 
 export const OrderCustomerSectionComponent = ({ enroll = false }: { enroll?: boolean }) => {
@@ -63,11 +65,13 @@ export const OrderCustomerSectionComponent = ({ enroll = false }: { enroll?: boo
         email: data.email,
         name: data.name,
         phone: data.phone,
+        ...(data.branch ? { branch: data.branch } : null),
         ...(tabCustomer === "search" ? { id: data?.id } : null),
         ...(enroll && {
           third_party: thirdParty as IThirdPartyApp,
           booking_id: data?.booking_id ?? bookings,
         }),
+        branch: data.branch as string | undefined,
       };
       // const res = await mutateAsync(payload);
       // if (res) {
@@ -255,48 +259,75 @@ export const OrderCustomerSectionComponent = ({ enroll = false }: { enroll?: boo
                     </div>
                   </>
                 ) : (
-                  <div className="flex flex-col gap-2">
-                    <Label className=" text-brand-999 font-medium text-sm">Select Member</Label>
-                    <Select
-                      options={optionData()}
-                      value={selectedUser}
-                      classNames={{
-                        control: () =>
-                          "w-full !border-2 !border-gray-200 rounded-lg text-gray-999  focus:outline-none focus:border-brand-500 transition-colors !rounded-md !bg-transparent shadow-xs h-[42px]",
-                        placeholder: () => "placeholder-gray-400",
-                        singleValue: () => "text-brand-999",
-                        input: () => "text-brand-999 bg-none",
-                      }}
-                      isLoading={isLoading}
-                      // getOptionLabel={(opt) => opt.full_name ?? opt.phone}
-                      // formatOptionLabel={(opt) => (
-                      //   <div className="flex flex-col gap-1">
-                      //     <p className="font-semibold">{opt.full_name}</p>
-                      //     <p className="text-gray-500 text-sm">{opt.phone}</p>
-                      //   </div>
-                      // )}
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-2">
+                      <Label className=" text-brand-999 font-medium text-sm">Select Member</Label>
+                      <Select
+                        options={optionData()}
+                        value={selectedUser}
+                        classNames={{
+                          control: () =>
+                            "w-full !border-2 !border-gray-200 rounded-lg text-gray-999  focus:outline-none focus:border-brand-500 transition-colors !rounded-md !bg-transparent shadow-xs h-[42px]",
+                          placeholder: () => "placeholder-gray-400",
+                          singleValue: () => "text-brand-999",
+                          input: () => "text-brand-999 bg-none",
+                        }}
+                        isLoading={isLoading}
+                        getOptionValue={(opt) => opt.id}
+                        onInputChange={onSearch}
+                        inputValue={search}
+                        onChange={(e) => {
+                          setSelectedUser(e);
 
-                      getOptionValue={(opt) => opt.id}
-                      onInputChange={onSearch}
-                      inputValue={search}
-                      onChange={(e) => {
-                        setSelectedUser(e);
-
-                        if (enroll) {
-                        } else {
-                          methods.setValue("name", e?.full_name as string);
-                          methods.setValue("email", e?.email as string);
-                          methods.setValue("phone", e?.phone as string);
-                          methods.setValue("id", e?.id as string);
-                          addCustomer({
-                            name: e?.full_name as string,
-                            email: e?.email as string,
-                            phone: e?.phone as string,
-                            id: e?.id,
-                          });
-                        }
-                      }}
-                    />
+                          if (enroll) {
+                          } else {
+                            methods.setValue("name", e?.full_name as string);
+                            methods.setValue("email", e?.email as string);
+                            methods.setValue("phone", e?.phone as string);
+                            methods.setValue("id", e?.id as string);
+                            addCustomer({
+                              name: e?.full_name as string,
+                              email: e?.email as string,
+                              phone: e?.phone as string,
+                              id: e?.id,
+                              branch: methods.getValues("branch") as string | undefined,
+                            });
+                          }
+                        }}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Label className=" text-brand-999 font-medium text-sm">Branch</Label>
+                      <Select
+                        options={SEHELA_BRANCH as unknown as { value: string; label: string }[]}
+                        value={SEHELA_BRANCH.find((b) => b.value === methods.watch("branch")) ?? null}
+                        classNames={{
+                          control: () =>
+                            "w-full !border-2 !border-gray-200 rounded-lg text-gray-999 focus:outline-none focus:border-brand-500 transition-colors !rounded-md !bg-transparent shadow-xs h-[42px]",
+                          placeholder: () => "placeholder-gray-400",
+                          singleValue: () => "text-brand-999",
+                          input: () => "text-brand-999 bg-none",
+                        }}
+                        placeholder="Select branch..."
+                        getOptionValue={(opt) => (opt as unknown as { value: string }).value}
+                        getOptionLabel={(opt) => (opt as unknown as { label: string }).label}
+                        onChange={(opt) => {
+                          const v = (opt as unknown as { value: string } | null)?.value ?? "";
+                          methods.setValue("branch", v);
+                          // keep customerData in sync if member already chosen
+                          const currentId = methods.getValues("id");
+                          if (currentId) {
+                            addCustomer({
+                              name: methods.getValues("name") as string,
+                              email: methods.getValues("email") as string,
+                              phone: methods.getValues("phone") as string,
+                              id: currentId as string,
+                              branch: v || undefined,
+                            });
+                          }
+                        }}
+                      />
+                    </div>
                     {enroll && (
                       <div className="flex justify-end">
                         <Button
@@ -307,6 +338,7 @@ export const OrderCustomerSectionComponent = ({ enroll = false }: { enroll?: boo
                               email: selectedUser?.email as string,
                               phone: selectedUser?.phone as string,
                               id: selectedUser?.id,
+                              branch: methods.getValues("branch") as string | undefined,
                               third_party: thirdParty as IThirdPartyApp,
                               booking_id: bookings,
                             });

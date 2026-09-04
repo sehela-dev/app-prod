@@ -4,7 +4,7 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Divider } from "@/components/ui/divider";
 
@@ -55,6 +55,13 @@ export const DetailFormAddTransaction = () => {
   const [selectedBank, setSelectedBank] = useState<{ label: string; value: string } | null>(null);
   const [selectedBankTo, setSelectedBankTo] = useState<{ label: string; value: string } | null>(null);
   const [selectedBranch, setSelectedBranch] = useState<{ label: string; value: string } | null>(null);
+
+  useEffect(() => {
+    if (customerData?.branch && !selectedBranch) {
+      const found = SEHELA_BRANCH.find((b) => b.value === customerData.branch);
+      if (found) setSelectedBranch(found as { label: string; value: string });
+    }
+  }, [customerData?.branch, selectedBranch]);
 
   const [nameFrom, setNameFrom] = useState(customerData?.name ?? "");
   const [openModalSharing, setOpenModalSharing] = useState(false);
@@ -162,10 +169,10 @@ export const DetailFormAddTransaction = () => {
           },
         }
         : {
-          branch: selectedBranch?.value as string,
+          branch: (selectedBranch?.value ?? customerData?.branch) as string,
         }),
       user_id: customerData?.id as string,
-      branch: selectedBranch?.value as string,
+      branch: (selectedBranch?.value ?? customerData?.branch) as string,
       ...(discountData ? { voucher_code: selectedVoucher?.code } : null),
     };
     // console.log(payload)
@@ -616,6 +623,7 @@ export const DetailFormAddTransaction = () => {
                       <Label className="text-gray-500">Branch</Label>
                       <Select
                         options={SEHELA_BRANCH as never}
+                        value={selectedBranch as never}
                         className="basic-multi-select "
                         classNames={{
                           control: () =>
@@ -624,6 +632,7 @@ export const DetailFormAddTransaction = () => {
                           singleValue: () => "text-brand-999",
                           input: () => "text-brand-999 bg-none",
                         }}
+                        placeholder="Select branch..."
                         onChange={(e) => {
                           // eslint-disable-next-line @typescript-eslint/no-explicit-any
                           setSelectedBranch(e as any);
