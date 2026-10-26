@@ -1,4 +1,5 @@
-import { ShopPageView } from "@/view/shop";
+// import { ShopPageView } from "@/view/shop";
+import { ShopUnderDevelopmentView } from "@/view/shop/under-development";
 import { Loader2 } from "lucide-react";
 import { Suspense } from "react";
 
@@ -19,7 +20,8 @@ export default function Home() {
         </div>
       }
     >
-      <ShopPageView />
+      {/* <ShopPageView /> */}
+      <ShopUnderDevelopmentView />
     </Suspense>
   );
 }
