@@ -94,8 +94,8 @@ export const SessionListPage = () => {
     data: allData,
     isLoading: isLoadingAll,
     refetch: refetchAll,
-  // Strictly date-driven: no range yet (calendar hasn't set its month) = no fetch,
-  // so we never pull unfiltered history. Month nav changes the key → refetch.
+    // Strictly date-driven: no range yet (calendar hasn't set its month) = no fetch,
+    // so we never pull unfiltered history. Month nav changes the key → refetch.
   } = useGetAllSessions(sessionParams, view === "calendar" && !!selectedRange.from && !!selectedRange.to);
   const calendarData = view === "calendar" ? allData : undefined;
   const calendarLoading = view === "calendar" ? isLoadingAll : false;
@@ -272,7 +272,7 @@ export const SessionListPage = () => {
             </DropdownMenuItem>
           ) : null}
 
-          {row.status === "ended" || row.status === "canceled" ? (
+          {row.status === "canceled" ? (
             <></>
           ) : (
             can("session:delete") && (
