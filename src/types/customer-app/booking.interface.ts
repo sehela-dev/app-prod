@@ -134,11 +134,11 @@ export interface ICancelBookingParams {
 }
 
 export interface ICancelBookingData {
-  window: "free" | "penalty";
+  window: "free" | "penalty" | "unpaid";
   booking_id?: string;
   booking_status?: string;
   requires_choice?: boolean;
-  result?: "burned" | "penalty_pending";
+  result?: "burned" | "penalty_pending" | "payment_voided";
   choices?: TCancelBookingChoice[];
   message?: string;
   hours_until_start?: number;

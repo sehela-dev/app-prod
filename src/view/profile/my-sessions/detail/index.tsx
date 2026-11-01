@@ -36,7 +36,10 @@ export const MySessionDetail = () => {
   const isPendingPayment =
     !isPaymentFailed &&
     !isExpired &&
-    (bookingData?.booking_status === "pending_payment" || paymentStatus === "pending");
+    (bookingData?.booking_status === "pending_payment" || paymentStatus === "pending" || paymentStatus === "initiated");
+  // Unpaid: no money collected yet, so cancel voids the pending payment and returns no credit.
+  const isUnpaidBooking =
+    normalizedBookingStatus === "pending_payment" || paymentStatus === "pending" || paymentStatus === "initiated";
   const startMs = bookingData?.start_datetime ? new Date(bookingData.start_datetime).getTime() : NaN;
   // Session canceled status is enforced server-side (SESSION_CANCELED); this payload carries no session status.
   const canCancel =
@@ -94,6 +97,16 @@ export const MySessionDetail = () => {
 
   const handleCancelError = (error: unknown) => {
     const responseError = (error as AxiosError<{ error?: { code?: string; message?: string } }>)?.response?.data?.error;
+    if (responseError?.code === "PAYMENT_STATUS_UNKNOWN") {
+      // Keep the dialog open so the member can retry; BE fails safe instead of guessing.
+      // Reuse the global 5xx toast id so this replaces the interceptor's generic toast.
+      toast.error("Payment status unavailable", {
+        id: "error",
+        description: "We could not verify your payment status. Please try again in a moment.",
+        position: "top-center",
+      });
+      return;
+    }
     if (
       responseError?.code === "ALREADY_CANCELED" ||
       responseError?.code === "SESSION_STARTED" ||
@@ -118,6 +131,17 @@ export const MySessionDetail = () => {
       {
         onSuccess: (res) => {
           const result = res?.data as ICancelBookingData | undefined;
+          if (result?.window === "unpaid") {
+            // Terminal: pending payment was voided, no credit and no penalty flow.
+            closeCancelDialog();
+            refetch();
+            toast.success("Booking canceled", {
+              id: "cancel-success",
+              description: "The pending payment was voided. No credits were issued.",
+              position: "top-center",
+            });
+            return;
+          }
           if (result?.requires_choice) {
             setChoiceInfo({
               penalty: result.penalty_amount_idr ?? 0,
@@ -407,14 +431,18 @@ export const MySessionDetail = () => {
       {openCancel && cancelStep === "confirm" && (
         <BaseDialogComponent
           isOpen={openCancel}
-          title="Cancel Class?"
-          btnConfirm={cancelMutation.isPending ? "Working..." : "Yes, Cancel"}
+          title={isUnpaidBooking ? "Cancel booking?" : "Cancel Class?"}
+          btnConfirm={cancelMutation.isPending ? "Working..." : isUnpaidBooking ? "Yes, cancel booking" : "Yes, Cancel"}
           onConfirm={handleProbe}
           onClose={closeCancelDialog}
-          onCloseText="Keep My Class"
+          onCloseText={isUnpaidBooking ? "Keep booking" : "Keep My Class"}
           isDisabled={cancelMutation.isPending || !bookingId}
         >
-          <p className="text-center font-serif text-brand-500">Are you sure you want to cancel this booking? This action cannot be undone.</p>
+          <p className="text-center font-serif text-brand-500">
+            {isUnpaidBooking
+              ? "Payment for this session is not complete yet. If you cancel, the pending payment will be voided and no credits will be returned, because no payment has been received."
+              : "Are you sure you want to cancel this booking? This action cannot be undone."}
+          </p>
         </BaseDialogComponent>
       )}
       {openCancel && cancelStep === "choice" && choiceInfo && (
