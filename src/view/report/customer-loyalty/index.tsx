@@ -32,6 +32,8 @@ export const CustomerLoyaltyView = () => {
   const limit = 20;
 
   const { data, isLoading, isError, error } = useGetCustomerLoyalty({
+    page,
+    page_size: limit,
     sort_by: (sort.key as CustomerLoyaltySortBy | undefined) ?? "total_penjualan",
     order: sort.direction ?? "desc",
   });
@@ -41,9 +43,10 @@ export const CustomerLoyaltyView = () => {
     setPage(1);
   };
 
+  // Server-paginated: the API returns one page at a time plus pagination totals.
   const rows = useMemo(() => data?.data ?? [], [data]);
-  const totalPages = Math.max(1, Math.ceil(rows.length / limit));
-  const pageRows = useMemo(() => rows.slice((page - 1) * limit, page * limit), [rows, page]);
+  const totalPages = Math.max(1, data?.pagination?.total_pages ?? 1);
+  const totalItems = data?.pagination?.total_items ?? rows.length;
 
   const headers = [
     { id: "nama_customer", text: "Nama Customer", sortable: true, value: (row: ICustomerLoyaltyRow) => row.nama_customer || "-" },
@@ -127,7 +130,7 @@ export const CustomerLoyaltyView = () => {
             <p className="text-sm text-muted-foreground">No data — the endpoint is not available yet.</p>
           ) : (
             <CustomTable
-              data={pageRows}
+              data={rows}
               headers={headers}
               isLoading={isLoading}
               sort={sort}
@@ -141,9 +144,9 @@ export const CustomerLoyaltyView = () => {
             onPageChange={setPage}
             currentPage={page}
             showTotal
-            hasPrevPage={page > 1}
-            hasNextPage={page < totalPages}
-            totalItems={rows.length}
+            hasPrevPage={data?.pagination?.has_prev ?? page > 1}
+            hasNextPage={data?.pagination?.has_next ?? page < totalPages}
+            totalItems={totalItems}
             totalPages={totalPages}
             limit={limit}
           />
