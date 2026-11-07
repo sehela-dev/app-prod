@@ -979,25 +979,35 @@ export const SessionDetailPage = () => {
                   }}
                 >
                   <div className="grid grid-cols-2 gap-2">
-                    {refundOptions.map((option) => (
-                      <div
-                        key={option.value}
-                        className={cn("flex items-center space-x-2 border border-brand-400 rounded-xl p-4", {
-                          "border-2 bg-brand-50": refundType === option.value,
-                        })}
-                      >
-                        <RadioGroupItem value={option.value} id={option.value} />
-                        <Label htmlFor={option.value} className="text-sm font-medium text-brand-999 cursor-pointer">
-                          <div className="flex flex-row items-center gap-4">
-                            {option.icon}
-                            <div className="flex flex-col gap-2">
-                              <p className="font-bold text-xl">{option.title}</p>
-                              <p className="font-normal">{option.description}</p>
+                    {refundOptions.map((option) => {
+                      // Credit bookings can only return to their original package; cash bookings have no package to return to.
+                      const disabled =
+                        (option.value === "credit_return" && !isCredits) ||
+                        (option.value === "credit_issue_new" && isCredits);
+                      return (
+                        <div
+                          key={option.value}
+                          className={cn("flex items-center space-x-2 border border-brand-400 rounded-xl p-4", {
+                            "border-2 bg-brand-50": refundType === option.value,
+                            "opacity-40": disabled,
+                          })}
+                        >
+                          <RadioGroupItem value={option.value} id={option.value} disabled={disabled} />
+                          <Label
+                            htmlFor={option.value}
+                            className={cn("text-sm font-medium text-brand-999", disabled ? "cursor-not-allowed" : "cursor-pointer")}
+                          >
+                            <div className="flex flex-row items-center gap-4">
+                              {option.icon}
+                              <div className="flex flex-col gap-2">
+                                <p className="font-bold text-xl">{option.title}</p>
+                                <p className="font-normal">{option.description}</p>
+                              </div>
                             </div>
-                          </div>
-                        </Label>
-                      </div>
-                    ))}
+                          </Label>
+                        </div>
+                      );
+                    })}
                   </div>
                 </RadioGroup>
 
