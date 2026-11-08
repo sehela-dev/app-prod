@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import "./globals.css";
+import { Analytics } from "@vercel/analytics/next";
 import { Toaster } from "sonner";
 
 import { PaymentMethodProvider } from "@/context/payment-method.ctx";
@@ -25,6 +26,7 @@ export default function RootLayout({
             <Toaster />
           </PaymentMethodProvider>
         </QueryProvider>
+        <Analytics />
       </body>
     </html>
   );
