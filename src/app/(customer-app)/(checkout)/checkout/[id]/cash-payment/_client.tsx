@@ -10,7 +10,7 @@ import { useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
 import { useGetMySessionDetail } from "@/hooks/api/queries/customer/profile";
 import { useRemainingTime } from "@/hooks/use-remaining-time";
 import { formatDateHelper, normalizeOrderId } from "@/lib/helper";
-import { ENABLE_MEMBER_VOUCHER_LIFECYCLE } from "@/lib/config";
+import { ENABLE_MEMBER_VOUCHER_LIFECYCLE, ENABLE_NATIVE_PAYMENT } from "@/lib/config";
 import { VOUCHER_HELD_NOTE, VOUCHER_RELEASED_NOTE } from "@/lib/voucher";
 import { isPaymentFailure, isPaymentSuccess, isPaymentTerminal } from "@/lib/payment-status";
 import { loadSnap } from "@/lib/snap";
@@ -25,6 +25,7 @@ export default function CashPaymentPage() {
   const sessionId = typeof params.id === "string" ? params.id : null;
   const bookingId = searchParams.get("booking_id") as string | null;
   const snapParam = searchParams.get("snap_redirect_url") as string | null;
+  const createdSnapToken = searchParams.get("snap_token") as string | null;
 
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
   const openedTokenRef = useRef<string | null>(null);
@@ -43,7 +44,7 @@ export default function CashPaymentPage() {
   const { data: detailResp, isLoading, isError, refetch } = useGetMySessionDetail(bookingId ?? undefined);
   const detail = detailResp?.data;
 
-  const snapToken = detail?.payment?.snap_token ?? null;
+  const snapToken = createdSnapToken || detail?.payment?.snap_token || null;
   // URL param kept for old links only; checkout now passes booking_id alone.
   const snapFallbackUrl = snapParam || detail?.payment?.snap_redirect_url || null;
 
@@ -52,10 +53,10 @@ export default function CashPaymentPage() {
   const orderId = detail?.payment?.order_id ?? null;
   const createdAt = (detail as unknown as { created_at?: string })?.created_at ?? null;
 
-  // Native rows have no snap token; legacy rows have a token but no instructions.
+  // Native instructions are ignored for rendering: prod is Snap-only.
   const pi = detail?.payment?.payment_instructions ?? null;
-  const isRedirect = pi?.type === "redirect" || (!pi && Boolean(snapToken || snapFallbackUrl));
-  const nativeInstructions = pi && pi.type !== "redirect" ? pi : null;
+  const nativeInstructions = ENABLE_NATIVE_PAYMENT && pi && pi.type !== "redirect" ? pi : null;
+  const isRedirect = !nativeInstructions;
 
   const createdMs = createdAt ? Date.parse(createdAt) : NaN;
   const expiresAt = pi?.expires_at ?? (Number.isFinite(createdMs) ? new Date(createdMs + PAYMENT_TIMEOUT_MS).toISOString() : null);
@@ -70,6 +71,11 @@ export default function CashPaymentPage() {
   const isPaymentSettled = isPaymentSuccess(paymentStatus);
   const isPending = !isPaymentFailed && !isPaymentSettled && bookingStatus === "pending_payment";
   const canPay = isPending && !paymentConfirmed && !isExpired;
+  // The token from the create response is valid for 15 min and can open the
+  // popup even if the detail re-fetch has not caught up yet.
+  const canOpenCreated =
+    Boolean(createdSnapToken) && !paymentConfirmed && !isPaymentFailed && !isPaymentSettled && !isExpired;
+  const canOpenSnap = canPay || canOpenCreated;
   // Poll for every pending row, native or Snap; the hook stops on terminal.
   const shouldPoll = canPay;
 
@@ -82,7 +88,7 @@ export default function CashPaymentPage() {
   }, [liveStatus, refetch]);
 
   const openSnap = useCallback(async () => {
-    if (!snapToken || !canPay || snapBusyRef.current) return;
+    if (!snapToken || !canOpenSnap || snapBusyRef.current) return;
     snapBusyRef.current = true;
     openedTokenRef.current = snapToken;
     const release = () => {
@@ -123,21 +129,21 @@ export default function CashPaymentPage() {
         toast.error("Payment page unavailable", { description: "Please refresh and try again.", position: "top-center" });
       }
     }
-  }, [snapToken, snapFallbackUrl, canPay, refetch]);
+  }, [snapToken, snapFallbackUrl, canOpenSnap, refetch]);
 
   // Open Snap once per token, redirect rows only. onClose keeps the ref, so it never loops.
   useEffect(() => {
-    if (!canPay || !isRedirect || !snapToken) return;
+    if (!canOpenSnap || !isRedirect || !snapToken) return;
     if (openedTokenRef.current === snapToken) return;
     void openSnap();
-  }, [canPay, isRedirect, snapToken, openSnap]);
+  }, [canOpenSnap, isRedirect, snapToken, openSnap]);
 
   // No token at all: preserve the old redirect fallback, once.
   useEffect(() => {
-    if (!canPay || !isRedirect || snapToken || !snapFallbackUrl || fallbackOpenedRef.current) return;
+    if ((!canPay && !snapParam) || !isRedirect || snapToken || !snapFallbackUrl || fallbackOpenedRef.current) return;
     fallbackOpenedRef.current = true;
     window.location.href = snapFallbackUrl;
-  }, [canPay, isRedirect, snapToken, snapFallbackUrl]);
+  }, [canPay, snapParam, isRedirect, snapToken, snapFallbackUrl]);
 
   useEffect(() => {
     if (bookingStatus === "confirmed" || paymentStatus === "paid" || paymentStatus === "settlement" || paymentStatus === "capture") {
@@ -157,7 +163,7 @@ export default function CashPaymentPage() {
     );
   }
 
-  if (isError || (!detail && !snapParam)) {
+  if (isError || (!detail && !snapParam && !createdSnapToken)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-dvh px-6 text-center gap-4 font-serif text-brand-500">
         <AlertCircle className="h-12 w-12 text-red-500" />
@@ -296,7 +302,7 @@ export default function CashPaymentPage() {
               channelLabel={detail?.payment?.channel_label}
               remainingMs={expiryRemainingMs}
             />
-          ) : canPay && isRedirect && (snapToken || snapFallbackUrl) ? (
+          ) : canOpenSnap && isRedirect && (snapToken || snapFallbackUrl) ? (
             <div className="rounded-xl border border-brand-200 bg-brand-25 p-4 mb-6">
               <p className="text-sm font-medium text-brand-700">{snapToken ? "Secure payment window" : "Payment page"}</p>
               <p className="text-xs text-brand-500/70 mt-1">If it didn&apos;t open, click below. Keep this page open — we&apos;ll auto-detect success.</p>
@@ -307,6 +313,17 @@ export default function CashPaymentPage() {
                 <ExternalLink className="h-4 w-4" />
                 {snapToken ? "Open Payment Window" : "Open Payment Page"}
               </Button>
+              {snapFallbackUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.href = snapFallbackUrl;
+                  }}
+                  className="mt-2 w-full text-center text-xs font-medium text-brand-500/70 underline underline-offset-2"
+                >
+                  Trouble opening it? Continue on the payment page
+                </button>
+              )}
             </div>
           ) : (
             <div className="rounded-xl border-2 border-dashed border-brand-200 bg-brand-25 p-8 text-center mb-6">
@@ -397,7 +414,7 @@ export default function CashPaymentPage() {
                 Go to My Class
               </Button>
             )}
-            {canPay && isRedirect && (snapToken || snapFallbackUrl) && (
+            {canOpenSnap && isRedirect && (snapToken || snapFallbackUrl) && (
               <button
                 onClick={() => (snapToken ? void openSnap() : snapFallbackUrl && (window.location.href = snapFallbackUrl))}
                 className="w-full rounded-xl border border-brand-500 bg-white py-3 text-brand-500 font-semibold transition-colors hover:bg-brand-25 flex items-center justify-center gap-2"

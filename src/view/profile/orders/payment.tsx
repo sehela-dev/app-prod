@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
 import { useGetMemberOrder } from "@/hooks/api/queries/customer/orders";
 import { useRemainingTime } from "@/hooks/use-remaining-time";
-import { ENABLE_MEMBER_VOUCHER_LIFECYCLE } from "@/lib/config";
+import { ENABLE_MEMBER_VOUCHER_LIFECYCLE, ENABLE_NATIVE_PAYMENT } from "@/lib/config";
 import { formatCurrency } from "@/lib/helper";
 import { VOUCHER_HELD_NOTE, VOUCHER_RELEASED_NOTE } from "@/lib/voucher";
 import { isPaymentFailure, isPaymentSuccess, isPaymentTerminal } from "@/lib/payment-status";
@@ -13,7 +13,7 @@ import { humanizePaymentStatus } from "@/lib/pending-package-payment";
 import { loadSnap } from "@/lib/snap";
 import { NativeInstructionsComponent } from "@/view/payment/native-instructions";
 import { AlertCircle, CheckCircle, Clock, ExternalLink, Loader2, ShoppingBag } from "lucide-react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 
@@ -22,18 +22,22 @@ const PAYMENT_TIMEOUT_MS = 15 * 60 * 1000;
 export const OrderPaymentView = () => {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const orderId = params?.id as string;
+  const createdToken = searchParams.get("snap_token");
+  const createdUrl = searchParams.get("snap_redirect_url");
   const { data: order, isLoading, isError, refetch: refetchOrder } = useGetMemberOrder(orderId);
   const orderCode = order?.order_code ?? null;
+  const statusOrderId = order?.payment?.order_id ?? orderCode;
   const amountPaid = order ? Math.max(0, order.total_price_idr - (order.voucher_discount_idr ?? 0)) : 0;
 
-  const { data: statusData, refetch: refetchStatus } = useGetPaymentStatus(orderCode);
+  const { data: statusData, refetch: refetchStatus } = useGetPaymentStatus(statusOrderId);
   const statusRow = statusData?.data;
   const pi = statusRow?.payment_instructions ?? order?.payment_instructions ?? null;
-  const snapUrl = statusRow?.snap_redirect_url ?? (pi?.type === "redirect" ? pi.redirect_url : null);
-  const snapToken = statusRow?.snap_token ?? null;
-  const isRedirect = pi?.type === "redirect" || (!pi && Boolean(snapUrl));
-  const nativeInstructions = pi && pi.type !== "redirect" ? pi : null;
+  const snapUrl = createdUrl ?? statusRow?.snap_redirect_url ?? (pi?.type === "redirect" ? pi.redirect_url : null);
+  const snapToken = createdToken ?? statusRow?.snap_token ?? null;
+  const nativeInstructions = ENABLE_NATIVE_PAYMENT && pi && pi.type !== "redirect" ? pi : null;
+  const isRedirect = !nativeInstructions;
 
   const createdAtMs = order?.created_at ? Date.parse(order.created_at) : NaN;
   const expiresAt = pi?.expires_at ?? (Number.isFinite(createdAtMs) ? new Date(createdAtMs + PAYMENT_TIMEOUT_MS).toISOString() : null);
@@ -45,10 +49,14 @@ export const OrderPaymentView = () => {
   const isFailed = isPaymentFailure(serverStatus);
   const isExpired = windowExpired || serverStatus === "expire" || serverStatus === "expired";
   const isPending = !!orderCode && !isSettled && !isFailed && !isExpired;
+  // Create-response fields are valid for 15 min; open from them even if the
+  // order/status re-fetch has not caught up yet.
+  const canOpenCreated = Boolean(createdToken || createdUrl) && !isSettled && !isFailed && !isExpired;
+  const canOpenSnap = isPending || canOpenCreated;
 
   const snapBusyRef = useRef(false);
   const openSnap = useCallback(async () => {
-    if (!snapToken || snapBusyRef.current || !isPending) return;
+    if (!snapToken || snapBusyRef.current || !canOpenSnap) return;
     snapBusyRef.current = true;
     const release = () => {
       snapBusyRef.current = false;
@@ -87,12 +95,12 @@ export const OrderPaymentView = () => {
         toast.error("Payment page unavailable", { description: "Please refresh and try again.", position: "top-center" });
       }
     }
-  }, [snapToken, snapUrl, isPending, refetchStatus, refetchOrder]);
+  }, [snapToken, snapUrl, canOpenSnap, refetchStatus, refetchOrder]);
 
   const openedRef = useRef(false);
   useEffect(() => {
     // Stored native instructions win; never push the member to an external page.
-    if (nativeInstructions || openedRef.current || isSettled || isExpired || !isPending) return;
+    if (nativeInstructions || openedRef.current || isSettled || isExpired || !canOpenSnap) return;
     if (snapToken) {
       openedRef.current = true;
       void openSnap();
@@ -103,7 +111,7 @@ export const OrderPaymentView = () => {
       const tab = window.open(snapUrl, "_blank", "noopener,noreferrer");
       if (!tab) openedRef.current = false;
     }
-  }, [nativeInstructions, snapToken, isRedirect, snapUrl, isSettled, isExpired, isPending, openSnap]);
+  }, [nativeInstructions, snapToken, isRedirect, snapUrl, isSettled, isExpired, canOpenSnap, openSnap]);
 
   useEffect(() => {
     if (isPaymentTerminal(serverStatus)) {
@@ -231,6 +239,17 @@ export const OrderPaymentView = () => {
               >
                 <ExternalLink className="h-4 w-4" /> {snapToken ? "Open Payment Window" : "Open Midtrans Payment Page"}
               </Button>
+              {snapUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.href = snapUrl;
+                  }}
+                  className="mt-2 w-full text-center text-xs font-medium text-brand-500/70 underline underline-offset-2"
+                >
+                  Trouble opening it? Continue on the payment page
+                </button>
+              )}
             </div>
           )}
 
@@ -254,7 +273,7 @@ export const OrderPaymentView = () => {
             </div>
           </div>
 
-          {isPending && (
+          {isPending && (nativeInstructions || snapToken || snapUrl) && (
             <div className="mt-4 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 p-4">
               <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
               <div>
@@ -265,6 +284,17 @@ export const OrderPaymentView = () => {
                   <p className="text-xs text-blue-700/80">{VOUCHER_HELD_NOTE}</p>
                 )}
               </div>
+            </div>
+          )}
+
+          {isPending && !nativeInstructions && !snapToken && !snapUrl && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-800">
+                Payment details are unavailable. Refresh the status or start a new order.
+              </p>
+              <Button variant="outline" className="mt-3 w-full" onClick={() => void refetchStatus()}>
+                Refresh status
+              </Button>
             </div>
           )}
 

@@ -1,6 +1,5 @@
 "use client";
 import { BaseDialogComponent } from "@/components/general/base-dialog-component";
-import { PaymentChannelList } from "@/components/general/payment-channel-list";
 import { NavHeaderComponent } from "@/components/layout/header-checkout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,8 +7,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useAuthMember } from "@/context/member.ctx";
 import { useInitiatePackagePurchase, useRetryPackagePayment, useValidateVoucher } from "@/hooks/api/mutations/customers";
 import { useGetPublicCreditPackageDetail } from "@/hooks/api/queries/customer/public";
-import { useGetPaymentChannels, useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
-import { ENABLE_MEMBER_VOUCHER_LIFECYCLE, ENABLE_MEMBER_VOUCHER_PACKAGE, ENABLE_NATIVE_PAYMENT } from "@/lib/config";
+import { useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
+import { ENABLE_MEMBER_VOUCHER_LIFECYCLE, ENABLE_MEMBER_VOUCHER_PACKAGE } from "@/lib/config";
+import { loadSnap } from "@/lib/snap";
 import { formatPackageEligibility } from "@/lib/credit-package";
 import { formatCurrency, formatDateHelper } from "@/lib/helper";
 import {
@@ -34,7 +34,7 @@ import {
 } from "@/lib/pending-package-payment";
 import { CalendarClock, GemIcon, Info, Loader2, RefreshCw, Ticket, TicketPercent, Users, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { getPurchaseErrorMessage, getShareErrorMessage } from "@/api-req/customer-app/payments";
@@ -47,6 +47,7 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
   const { mutateAsync, isPending } = useInitiatePackagePurchase();
   const { mutateAsync: validateVoucherAsync, isPending: voucherValidating } = useValidateVoucher();
   const retryMutation = useRetryPackagePayment();
+  const snapBusyRef = useRef(false);
   const [agreed, setAgreed] = useState(false);
   const [shareEmail, setShareEmail] = useState("");
   const [shareError, setShareError] = useState<string | null>(null);
@@ -55,11 +56,7 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
   const [appliedVoucher, setAppliedVoucher] = useState<IValidateVoucherResponse | null>(null);
   const [voucherError, setVoucherError] = useState<string | null>(null);
   const [freePurchase, setFreePurchase] = useState<{ orderId?: string; code?: string | null } | null>(null);
-  const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [changeOpen, setChangeOpen] = useState(false);
-  const [changeChannel, setChangeChannel] = useState<string | null>(null);
-  const { data: channelsData, isLoading: channelsLoading } = useGetPaymentChannels(ENABLE_NATIVE_PAYMENT && isAuthenticated);
-  const channels = channelsData?.data ?? [];
   // Restore an in-progress payment (e.g. user returns from the Snap tab or refreshes).
   // Native rows have no Snap URL; the payment page reloads instructions from status.
   const [pending, setPending] = useState<{ orderId: string; snapUrl: string | null; initiatedAt: number } | null>(() => {
@@ -96,7 +93,6 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
   const price = Number(item?.price_idr) || 0;
   const discount = appliedVoucher?.calculated_discount ?? 0;
   const total = appliedVoucher?.discounted_total_idr ?? price;
-  const requiresChannel = ENABLE_NATIVE_PAYMENT && channels.length > 0 && total > 0;
   const voucherEnabled = ENABLE_MEMBER_VOUCHER_PACKAGE && isAuthenticated;
   const sessionRestrictionCopy = getSessionTypeRestrictionCopy(appliedVoucher?.session_types);
   const perClass = credits > 0 ? formatCurrency(String(Math.round(price / credits))) : null;
@@ -105,10 +101,10 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
   const classNames = item?.class_ids_restriction?.map((c) => c.name).join(", ");
   const classLabel = classNames ? classNames : "All Classes";
   const isNewOnlyBlocked = item?.only_for_new_users === true && isAuthenticated && isNewMember !== true;
-  const selectedChannelLabel = channels.find((channel) => channel.code === selectedChannel)?.label;
 
   const applyNewPayment = (data: {
     order_id?: string;
+    snap_token?: string | null;
     snap_redirect_url?: string | null;
     payment_instructions?: { type: string; expires_at?: string; redirect_url?: string } | null;
   } | null | undefined) => {
@@ -122,22 +118,19 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
     setPending({ orderId, snapUrl: url, initiatedAt });
     setNow(initiatedAt);
     const qs = new URLSearchParams({ order_id: orderId });
+    if (data?.snap_token) qs.set("snap_token", data.snap_token);
     if (url) qs.set("snap_redirect_url", url);
     if (instructions?.expires_at) qs.set("expires_at", instructions.expires_at);
     router.push(`/topup-credit/${id}/payment?${qs.toString()}`);
   };
 
-  const handlePackageAction = (paymentChannel?: string) => {
+  const handlePackageAction = () => {
     if (!pending) return;
     retryMutation.mutate(
-      {
-        order_id: pending.orderId,
-        ...(paymentChannel ? { payment_channel: paymentChannel } : {}),
-      },
+      { order_id: pending.orderId },
       {
         onSuccess: (res) => {
           setChangeOpen(false);
-          setChangeChannel(null);
           applyNewPayment(res.data);
         },
         onError: (error) => {
@@ -207,10 +200,6 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
       return;
     }
     if (isPending) return;
-    if (requiresChannel && !selectedChannel) {
-      setBuyError("Choose a payment method first.");
-      return;
-    }
     const trimmedEmail = shareEmail.trim();
     if (trimmedEmail) {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
@@ -224,7 +213,6 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
       const res = await mutateAsync({
         package_id: id,
         ...(trimmedEmail ? { share_with_email: trimmedEmail } : {}),
-        ...(requiresChannel && selectedChannel ? { payment_channel: selectedChannel } : {}),
         ...(voucherEnabled && appliedVoucher?.voucher_code ? { voucher_code: appliedVoucher.voucher_code } : {}),
       });
       const result = res.data;
@@ -261,14 +249,46 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
     clearPendingPackagePayment();
   };
 
-  // Continue payment: reuse one named Snap tab so repeat taps focus it
-  // instead of stacking duplicate payment tabs. When the popup is blocked we
-  // do NOT redirect this page to Snap — instead we land on the payment
-  // (pending) page, whose "Open Midtrans" button is a fresh user gesture.
-  const handleContinue = () => {
-    if (!pending) return;
+  // Continue payment: reuse the stored Snap token in the popup; the redirect
+  // page is the fallback when snap.js is unavailable or the popup is blocked.
+  const handleContinue = async () => {
+    if (!pending || snapBusyRef.current) return;
+    snapBusyRef.current = true;
+    const release = () => {
+      snapBusyRef.current = false;
+    };
     const qs = new URLSearchParams({ order_id: pending.orderId });
     if (pending.snapUrl) qs.set("snap_redirect_url", pending.snapUrl);
+    const token = statusData?.data?.snap_token ?? null;
+    if (token) {
+      try {
+        await loadSnap();
+        if (window.snap) {
+          window.snap.pay(token, {
+            onSuccess: () => {
+              release();
+              void refetchStatus();
+            },
+            onPending: () => {
+              release();
+              void refetchStatus();
+            },
+            onError: () => {
+              release();
+              void refetchStatus();
+            },
+            onClose: () => {
+              release();
+              void refetchStatus();
+            },
+          });
+          return;
+        }
+      } catch {
+        // fall through to the Snap page
+      }
+    }
+    release();
     if (pending.snapUrl) {
       const tab = window.open(pending.snapUrl, "sehela-snap-payment");
       if (tab) {
@@ -458,21 +478,6 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
         <div className="flex flex-col gap-3 rounded-2xl border border-brand-100 bg-white px-4 py-3.5">
           <p className="text-xs font-semibold text-brand-900">Payment preview</p>
 
-          {requiresChannel && (
-            <div className="flex flex-col gap-2">
-              <p className="text-[11px] font-semibold text-brand-900">Payment method</p>
-              <PaymentChannelList
-                channels={channels}
-                selected={selectedChannel}
-                onSelect={(code) => {
-                  setSelectedChannel(code);
-                  setBuyError(null);
-                }}
-              />
-              {selectedChannelLabel && <p className="text-[11px] text-gray-500">Selected: {selectedChannelLabel}</p>}
-            </div>
-          )}
-
           {voucherEnabled && (
             <div className="flex flex-col gap-2 border-t border-brand-50 pt-3">
               <p className="text-[11px] font-semibold text-brand-900">Kode diskon</p>
@@ -616,12 +621,10 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
           disabled={
             isPending ||
             !agreed ||
-            isNewOnlyBlocked ||
-            (pending && isSettled) ||
-            (ENABLE_NATIVE_PAYMENT && channelsLoading && total > 0) ||
-            (requiresChannel && !selectedChannel)
+            isNewOnlyBlocked === true ||
+            (!!pending && isSettled)
           }
-          aria-describedby={!agreed || isNewOnlyBlocked || (requiresChannel && !selectedChannel) ? "tnc-hint" : undefined}
+          aria-describedby={!agreed || isNewOnlyBlocked === true ? "tnc-hint" : undefined}
         >
           {isPending ? (
             <span className="inline-flex items-center gap-2">
@@ -639,17 +642,23 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
             "Login to buy"
           )}
         </Button>
-        {pending && !isSettled && requiresChannel && (
+        {pending && !isTerminal && pending.snapUrl && (
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = pending.snapUrl as string;
+            }}
+            className="w-full text-center text-[11px] font-medium text-brand-500/70 underline underline-offset-2"
+          >
+            Trouble opening it? Continue on the payment page
+          </button>
+        )}
+        {pending && !isTerminal && (
           <Button
             variant="outline"
             className="min-h-11 w-full rounded-xl border-brand-200 text-sm font-semibold"
-            onClick={() => {
-              setChangeChannel(selectedChannel);
-              setChangeOpen(true);
-            }}
-            disabled={retryMutation.isPending}
+            onClick={() => setChangeOpen(true)}
           >
-            {retryMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Change payment method
           </Button>
         )}
@@ -657,11 +666,6 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
           <p id="tnc-hint" className="text-center text-[11px] text-gray-500">
             Please read and agree to the purchase terms above to continue
             {!isAuthenticated ? " to login and buy" : ""}.
-          </p>
-        )}
-        {agreed && requiresChannel && !selectedChannel && (
-          <p id="tnc-hint" className="text-center text-[11px] text-gray-500">
-            Choose a payment method to continue.
           </p>
         )}
         {isNewOnlyBlocked && (
@@ -685,7 +689,7 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
               </div>
               <p className="text-xs leading-relaxed text-yellow-700">
                 {pending.snapUrl
-                  ? "Payment opened in a new tab — complete it within 15 minutes."
+                  ? "Complete the payment in the secure window within 15 minutes."
                   : "Complete the payment on the payment page within 15 minutes."}{" "}
                 This page checks the status automatically{serverStatus ? ` (now: ${humanizePaymentStatus(serverStatus)})` : ""}.
               </p>
@@ -746,34 +750,19 @@ export const TopUpCreditDetailView = ({ id }: { id: string }) => {
           </Button>
         </div>
       </div>
-
       {changeOpen && (
         <BaseDialogComponent
           isOpen={changeOpen}
-          title="Change payment method"
-          btnConfirm={retryMutation.isPending ? "Working..." : "Confirm change"}
-          onConfirm={() => {
-            if (changeChannel) handlePackageAction(changeChannel);
-          }}
-          onClose={() => {
-            setChangeOpen(false);
-            setChangeChannel(null);
-          }}
+          title="Change payment method?"
+          btnConfirm={retryMutation.isPending ? "Working..." : "Yes, change"}
+          onConfirm={handlePackageAction}
+          onClose={() => setChangeOpen(false)}
           onCloseText="Cancel"
-          isDisabled={!changeChannel || retryMutation.isPending}
+          isDisabled={retryMutation.isPending}
         >
-          {channels.length === 0 ? (
-            <p className="text-center text-sm text-brand-500/70">No payment methods are available.</p>
-          ) : (
-            <div className="max-h-[50vh] overflow-y-auto">
-              <PaymentChannelList
-                channels={channels}
-                selected={changeChannel}
-                defaultOpen
-                onSelect={setChangeChannel}
-              />
-            </div>
-          )}
+          <p className="text-center text-sm leading-relaxed text-brand-500">
+            Are you sure you want to change the payment method? The current order will be cancelled and a new one will be created. You&apos;ll choose the new method on the payment page.
+          </p>
         </BaseDialogComponent>
       )}
     </div>

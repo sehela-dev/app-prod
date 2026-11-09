@@ -1,13 +1,13 @@
 "use client";
 import { BaseDialogComponent } from "@/components/general/base-dialog-component";
-import { PaymentChannelList } from "@/components/general/payment-channel-list";
 import { NavHeaderComponent } from "@/components/layout/header-checkout";
 import { Button } from "@/components/ui/button";
 import { useRetryPackagePayment } from "@/hooks/api/mutations/customers";
-import { useGetPaymentChannels, useGetPaymentHistoryDetail, useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
+import { useGetPaymentHistoryDetail, useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
 import { ENABLE_NATIVE_PAYMENT } from "@/lib/config";
 import { formatCurrency, formatDateHelper } from "@/lib/helper";
 import { isPaymentRetryable, isPaymentTerminal } from "@/lib/payment-status";
+import { loadSnap } from "@/lib/snap";
 import {
   formatExpiryCountdown,
   getPendingPackagePayment,
@@ -17,7 +17,7 @@ import {
 import { getPurchaseKind, PURCHASE_KIND_BADGE, PURCHASE_KIND_ICON_BG, PURCHASE_KIND_LABEL } from "@/lib/purchase-kind";
 import { AlertCircle, Gem as GemIcon, Loader2, Package as PackageIcon, ReceiptText, RefreshCw, Ticket as TicketIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NativeInstructionsComponent } from "@/view/payment/native-instructions";
 
 const SUCCESS = ["settlement", "capture"];
@@ -29,9 +29,12 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
   const router = useRouter();
   const { data, isLoading, isError, refetch } = useGetPaymentHistoryDetail(refId);
   const item = data?.data;
+  const resumeUrl =
+    (item && typeof item.snap_redirect_url === "string" && item.snap_redirect_url) ||
+    (getPendingPackagePayment()?.snap_redirect_url ?? null);
   const [changeOpen, setChangeOpen] = useState(false);
-  const [changeChannel, setChangeChannel] = useState<string | null>(null);
   const retryMutation = useRetryPackagePayment();
+  const snapBusyRef = useRef(false);
 
   const kind = getPurchaseKind(item?.payable_type);
   const isPackage = kind === "credit";
@@ -44,8 +47,6 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
     : item?.provider_txn_id
       ? String(item.provider_txn_id)
       : null;
-  const { data: channelsData } = useGetPaymentChannels(ENABLE_NATIVE_PAYMENT && isPackage);
-  const channels = channelsData?.data ?? [];
 
   // Expiry anchor: server expires_at first, created_at + 15m fallback.
   const [now, setNow] = useState(() => Date.now());
@@ -65,7 +66,7 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
   const isPending = serverPending && !timeExpired;
   const { data: statusData, refetch: refetchStatus } = useGetPaymentStatus(isPackage && isPending ? orderId : null);
   const pi = statusData?.data?.payment_instructions ?? null;
-  const nativeInstructions = pi && pi.type !== "redirect" ? pi : null;
+  const nativeInstructions = ENABLE_NATIVE_PAYMENT && pi && pi.type !== "redirect" ? pi : null;
   const paymentRemainingMs = pi?.expires_at
     ? Math.max(0, Date.parse(pi.expires_at) - now)
     : remainingMs;
@@ -74,14 +75,48 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
     if (isPaymentTerminal(statusData?.data?.transaction_status ?? null)) void refetch();
   }, [statusData?.data?.transaction_status, refetch]);
 
-  // Pending resume: row snap URL first (pending-only per BE), then stored.
-  // Strict new tab — never same-tab redirect; blocked popups fall back to
-  // the top-up payment page (packages) which hosts its own open button.
-  const handleContinue = () => {
-    if (!item) return;
+  // Pending resume: popup with the stored token, then the Snap page. Blocked
+  // popups fall back to the top-up payment page (packages) which hosts its own
+  // open button.
+  const handleContinue = async () => {
+    if (!item || snapBusyRef.current) return;
+    snapBusyRef.current = true;
+    const release = () => {
+      snapBusyRef.current = false;
+    };
     const url =
       (typeof item.snap_redirect_url === "string" && item.snap_redirect_url) ||
       (getPendingPackagePayment()?.snap_redirect_url ?? null);
+    const token = isPackage ? statusData?.data?.snap_token ?? null : null;
+    if (token) {
+      try {
+        await loadSnap();
+        if (window.snap) {
+          window.snap.pay(token, {
+            onSuccess: () => {
+              release();
+              void refetchStatus();
+            },
+            onPending: () => {
+              release();
+              void refetchStatus();
+            },
+            onError: () => {
+              release();
+              void refetchStatus();
+            },
+            onClose: () => {
+              release();
+              void refetchStatus();
+            },
+          });
+          return;
+        }
+      } catch {
+        // fall through to the Snap page
+      }
+    }
+    release();
     if (url && window.open(url, "_blank", "noopener,noreferrer")) return;
     if (isPackage) {
       const packageId = String(item.package_id ?? item.payable_id ?? "");
@@ -99,17 +134,13 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
     }
   };
 
-  const handlePackageAction = (paymentChannel?: string) => {
+  const handlePackageAction = () => {
     if (!isPackage || !orderId) return;
     retryMutation.mutate(
-      {
-        order_id: orderId,
-        ...(paymentChannel ? { payment_channel: paymentChannel } : {}),
-      },
+      { order_id: orderId },
       {
         onSuccess: (res) => {
           setChangeOpen(false);
-          setChangeChannel(null);
           const packageId = String(item?.package_id ?? item?.payable_id ?? "");
           setPendingPackagePayment({
             order_id: res.data.order_id,
@@ -118,6 +149,7 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
             initiated_at: Date.now(),
           });
           const qs = new URLSearchParams({ order_id: res.data.order_id });
+          if (res.data.snap_token) qs.set("snap_token", res.data.snap_token);
           if (res.data.snap_redirect_url) qs.set("snap_redirect_url", res.data.snap_redirect_url);
           if (res.data.payment_instructions?.expires_at) qs.set("expires_at", res.data.payment_instructions.expires_at);
           router.push(packageId ? `/topup-credit/${packageId}/payment?${qs.toString()}` : "/profile/purchase-history");
@@ -237,9 +269,25 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
         )}
 
         {isPending && !nativeInstructions && (
-          <Button className="min-h-12 w-full text-sm font-extrabold" onClick={handleContinue}>
-            Continue payment
-          </Button>
+          <>
+            <Button className="min-h-12 w-full text-sm font-extrabold" onClick={handleContinue}>
+              Continue payment
+            </Button>
+            {resumeUrl && (
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = resumeUrl;
+                }}
+                className="w-full text-center text-xs font-medium text-brand-500/70 underline underline-offset-2"
+              >
+                Trouble opening it? Continue on the payment page
+              </button>
+            )}
+            <Button variant="outline" className="min-h-11 w-full text-sm font-semibold" onClick={() => setChangeOpen(true)}>
+              Change payment method
+            </Button>
+          </>
         )}
 
         {isPending && (
@@ -266,19 +314,6 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
           </Button>
         )}
 
-        {isPackage && (isPending || isPaymentRetryable(status) || displayStatus === "expired") && channels.length > 0 && (
-          <Button
-            variant="outline"
-            className="min-h-12 w-full text-sm font-semibold"
-            onClick={() => {
-              setChangeChannel(null);
-              setChangeOpen(true);
-            }}
-            disabled={retryMutation.isPending}
-          >
-            Change payment method
-          </Button>
-        )}
         {!isPending && (SUCCESS.includes(status)) && (
           <Button
             className="min-h-12 w-full text-sm font-extrabold"
@@ -303,36 +338,22 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
           </Button>
         </div>
       </div>
-
       {changeOpen && (
         <BaseDialogComponent
           isOpen={changeOpen}
-          title="Change payment method"
-          btnConfirm={retryMutation.isPending ? "Working..." : "Confirm change"}
-          onConfirm={() => {
-            if (changeChannel) handlePackageAction(changeChannel);
-          }}
-          onClose={() => {
-            setChangeOpen(false);
-            setChangeChannel(null);
-          }}
+          title="Change payment method?"
+          btnConfirm={retryMutation.isPending ? "Working..." : "Yes, change"}
+          onConfirm={handlePackageAction}
+          onClose={() => setChangeOpen(false)}
           onCloseText="Cancel"
-          isDisabled={!changeChannel || retryMutation.isPending}
+          isDisabled={retryMutation.isPending}
         >
-          {channels.length === 0 ? (
-            <p className="text-center text-sm text-brand-500/70">No payment methods are available.</p>
-          ) : (
-            <div className="max-h-[50vh] overflow-y-auto">
-              <PaymentChannelList
-                channels={channels}
-                selected={changeChannel}
-                defaultOpen
-                onSelect={setChangeChannel}
-              />
-            </div>
-          )}
+          <p className="text-center text-sm leading-relaxed text-brand-500">
+            Are you sure you want to change the payment method? The current order will be cancelled and a new one will be created. You&apos;ll choose the new method on the payment page.
+          </p>
         </BaseDialogComponent>
       )}
+
     </div>
   );
 };

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Loader2, MapPin, TicketPercent, Users, Video, X } from "lucide-react";
 
@@ -7,7 +7,6 @@ import { CircleCheckSvg } from "@/components/asset/svg/CircleCheckSvg";
 import { CircleInfoSvg } from "@/components/asset/svg/CircleInfoSvg";
 import { CardCreditComponent } from "@/components/general/card-credit";
 import { CheckoutSessionCardComponent } from "@/components/general/checkout-session-card";
-import { PaymentChannelList } from "@/components/general/payment-channel-list";
 
 import { StickyContainerComponent } from "@/components/layout";
 import { NavHeaderComponent } from "@/components/layout/header-checkout";
@@ -17,10 +16,9 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { usePaymentMethodCtx } from "@/context/payment-method.ctx";
 import { useCreateBooking, useCreatePublicBooking, useValidateVoucher } from "@/hooks/api/mutations/customers";
-import { useGetPaymentChannels } from "@/hooks/api/queries/customer/payments";
 import { useGetEligibleCredits, useGetMyCredits } from "@/hooks/api/queries/customer/profile";
 import { useGetPublicSession } from "@/hooks/api/queries/customer/public";
-import { ENABLE_MEMBER_VOUCHER_LIFECYCLE, ENABLE_NATIVE_PAYMENT } from "@/lib/config";
+import { ENABLE_MEMBER_VOUCHER_LIFECYCLE } from "@/lib/config";
 import { formatEligibleTime, formatInstructorNames } from "@/lib/credit-package";
 import { formatDateHelper } from "@/lib/helper";
 import {
@@ -73,7 +71,6 @@ export const CheckoutSessionView = () => {
   const { id } = useParams();
   const { paymentType, onChangePaymentMethod } = usePaymentMethodCtx();
   const [selectedCredit, setSelectedCredit] = useState<string | null>(null);
-  const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [couponInput, setCouponInput] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
   const [validatedVoucher, setValidatedVoucher] = useState<IValidateVoucherResponse | null>(null);
@@ -97,32 +94,10 @@ export const CheckoutSessionView = () => {
   const isCreditOnly = !!session?.is_credit_only || session?.price_idr === 0;
   const allowCredit = !!session?.allow_credit && (session?.price_credit_amount ?? 0) > 0;
   const showCredit = isCreditOnly ? allowCredit : paymentType === "credit" && allowCredit;
-  // Flag off: never send `payment_channel`, so BE mints a Snap token for all channels.
-  const channelsEnabled = ENABLE_NATIVE_PAYMENT && paymentType === "cash" && !isCreditOnly;
-  const requiresChannel =
-    channelsEnabled && (validatedVoucher?.discounted_total_idr ?? session?.price_idr ?? 0) > 0;
-
-  const {
-    data: channelsData,
-    isLoading: channelsLoading,
-    isError: channelsError,
-    refetch: refetchChannels,
-  } = useGetPaymentChannels(channelsEnabled);
-  const channels = useMemo(() => channelsData?.data ?? [], [channelsData]);
 
   useEffect(() => {
     if (isCreditOnly && paymentType !== "credit" && allowCredit) onChangePaymentMethod("credit");
   }, [isCreditOnly, paymentType, allowCredit, onChangePaymentMethod]);
-
-  useEffect(() => {
-    if (!requiresChannel) {
-      setSelectedChannel(null);
-      return;
-    }
-    if (channels.length === 0) return;
-    // No default selection: Pay stays disabled until the member picks a channel.
-    setSelectedChannel((current) => (current && channels.some((channel) => channel.code === current) ? current : null));
-  }, [requiresChannel, channels]);
 
   if (isLoading) {
     return (
@@ -147,7 +122,6 @@ export const CheckoutSessionView = () => {
   const creditsListLoading = eligibleParams ? eligibleLoading : creditsLoading;
   const selectedPackage = availableCredits.find((item) => item.package_purchase_id === selectedCredit);
   const selectedPackageRestriction = selectedPackage ? getPackageRestrictionSummary(selectedPackage) : "";
-  const selectedChannelLabel = channels.find((channel) => channel.code === selectedChannel)?.label ?? "Pilih metode pembayaran";
   const isOnline = session.place === "online";
   const levelBadge = getSessionLevelBadge(session.level);
   const typeBadge = getSessionTypeBadge(session.type);
@@ -209,7 +183,6 @@ export const CheckoutSessionView = () => {
   const discount = validatedVoucher?.calculated_discount ?? 0;
   const total = validatedVoucher?.discounted_total_idr ?? subtotal;
   const sessionRestrictionCopy = getSessionTypeRestrictionCopy(validatedVoucher?.session_types);
-  const channelSelectionMissing = requiresChannel && (!selectedChannel || channelsLoading || channelsError || channels.length === 0);
 
   const handleProcessPayment = async () => {
     const handleBookingError = async (err: unknown) => {
@@ -230,12 +203,6 @@ export const CheckoutSessionView = () => {
         setSelectedCredit(null);
         await refetchEligibleCredits();
         return false; // mutation toast shows the server message
-      }
-      if (code === "CHANNEL_DISABLED" || code === "CHANNEL_UNAVAILABLE") {
-        // The channel was disabled between load and submit — reload the list.
-        setSelectedChannel(null);
-        void refetchChannels();
-        return false;
       }
       if (code === "MIDTRANS_ERROR" || code === "MIDTRANS_CONNECTION_ERROR" || code === "SESSION_FULL") {
         // BE has already released the slot / changed the session state.
@@ -278,14 +245,18 @@ export const CheckoutSessionView = () => {
           class_session_id: session.id,
           payment_method: "midtrans",
           ...(voucher_code ? { voucher_code } : {}),
-          ...(ENABLE_NATIVE_PAYMENT && requiresChannel && selectedChannel ? { payment_channel: selectedChannel } : {}),
         });
         const bookingData = response.data;
         if (bookingData?.payment_status === "paid" || Number(bookingData?.amount_idr ?? 1) === 0) {
           router.push(`/checkout/${id}/success`);
         } else if (bookingData?.booking_id) {
+          // Pass the create-time token/URL so the popup can open without a
+          // second (possibly stale) detail fetch.
+          const qs = new URLSearchParams({ booking_id: bookingData.booking_id });
+          if (bookingData.snap_token) qs.set("snap_token", bookingData.snap_token);
+          if (bookingData.snap_redirect_url) qs.set("snap_redirect_url", bookingData.snap_redirect_url);
           // Snap opens as an overlay on the cash-payment page.
-          router.push(`/checkout/${id}/cash-payment?booking_id=${bookingData.booking_id}`);
+          router.push(`/checkout/${id}/cash-payment?${qs.toString()}`);
         } else {
           router.push(`/checkout/${id}/success`);
         }
@@ -475,45 +446,6 @@ export const CheckoutSessionView = () => {
             </div>
           ) : (
             <>
-              {requiresChannel && (
-                <div className="flex flex-col gap-2">
-                  <h3 className="font-semibold">Choose a payment method</h3>
-                  {channelsLoading ? (
-                    <div className="flex items-center justify-center rounded-2xl border border-brand-100 bg-white py-8">
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : channelsError ? (
-                    <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-                      <p className="text-sm font-medium text-red-600">Couldn&apos;t load payment methods.</p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="mt-3 rounded-xl border-red-200 text-red-600"
-                        onClick={() => void refetchChannels()}
-                      >
-                        Retry
-                      </Button>
-                    </div>
-                  ) : channels.length === 0 ? (
-                    <div className="rounded-2xl border border-brand-100 bg-brand-25 p-4">
-                      <p className="text-sm font-medium text-brand-500/70">
-                        No online payment methods are available right now. Please try again later.
-                      </p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="mt-3 rounded-xl border-brand-200"
-                        onClick={() => void refetchChannels()}
-                      >
-                        Refresh
-                      </Button>
-                    </div>
-                  ) : (
-                    <PaymentChannelList channels={channels} selected={selectedChannel} onSelect={setSelectedChannel} />
-                  )}
-                </div>
-              )}
-
               <div className="flex flex-col gap-2">
                 <h3 className="font-semibold">Kode diskon</h3>
                 <div className="flex items-center gap-2">
@@ -591,12 +523,6 @@ export const CheckoutSessionView = () => {
                       {discount > 0 ? `- Rp ${discount.toLocaleString("id-ID")}` : "Rp 0"}
                     </span>
                   </div>
-                  {requiresChannel && selectedChannel && (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-brand-500/60">Payment method</span>
-                      <span className="font-semibold text-right">{selectedChannelLabel}</span>
-                    </div>
-                  )}
                   <div className="h-px w-full bg-brand-100" />
                   <div className="flex items-center justify-between">
                     <span className="font-semibold">Total</span>
@@ -618,7 +544,7 @@ export const CheckoutSessionView = () => {
         <div className="flex w-full p-4">
           <Button
             className="w-full min-h-[48px]"
-            disabled={(showCredit && !selectedCredit) || channelSelectionMissing || bookingPending || publicBookingPending}
+            disabled={(showCredit && !selectedCredit) || bookingPending || publicBookingPending}
             onClick={handleProcessPayment}
           >
             {(bookingPending || publicBookingPending) && <Loader2 className="h-4 w-4 animate-spin" />}

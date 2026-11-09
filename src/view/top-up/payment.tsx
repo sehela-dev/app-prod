@@ -6,6 +6,8 @@ import { useGetPublicCreditPackageDetail } from "@/hooks/api/queries/customer/pu
 import { useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
 import type { IPaymentStatus } from "@/api-req/customer-app/payments";
 import { formatCurrency } from "@/lib/helper";
+import { ENABLE_NATIVE_PAYMENT } from "@/lib/config";
+import { loadSnap } from "@/lib/snap";
 import {
   PACKAGE_PAYMENT_FAILURE_STATUSES,
   PACKAGE_PAYMENT_SUCCESS_STATUSES,
@@ -17,10 +19,10 @@ import {
 import { NativeInstructionsComponent } from "@/view/payment/native-instructions";
 import { AlertCircle, CheckCircle, Clock, ExternalLink, GemIcon, Loader2 } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // Pending host page for package purchases — mirrors checkout/[id]/cash-payment:
-// Midtrans opens in a new tab, this page owns the countdown + status.
+// Midtrans opens as a Snap popup, this page owns the countdown + status.
 export const PackagePaymentView = () => {
   const router = useRouter();
   const { id } = useParams();
@@ -28,6 +30,7 @@ export const PackagePaymentView = () => {
   const searchParams = useSearchParams();
   const orderId = searchParams.get("order_id");
   const snapParam = searchParams.get("snap_redirect_url");
+  const snapParamToken = searchParams.get("snap_token");
   const expiresParam = searchParams.get("expires_at");
   const createdParam = searchParams.get("created_at");
 
@@ -38,10 +41,11 @@ export const PackagePaymentView = () => {
 
   const stored = getPendingPackagePayment();
   const storedMatch = stored && (!orderId || stored.order_id === orderId) ? stored : null;
-  const snapUrl = snapParam || storedMatch?.snap_redirect_url || statusRow?.snap_redirect_url || null;
   const pi = statusRow?.payment_instructions ?? null;
-  const isRedirect = pi?.type === "redirect" || (!pi && Boolean(snapUrl));
-  const nativeInstructions = pi && pi.type !== "redirect" ? pi : null;
+  const snapUrl = snapParam || storedMatch?.snap_redirect_url || statusRow?.snap_redirect_url || (pi?.type === "redirect" ? pi.redirect_url : null) || null;
+  const snapToken = snapParamToken || statusRow?.snap_token || null;
+  const nativeInstructions = ENABLE_NATIVE_PAYMENT && pi && pi.type !== "redirect" ? pi : null;
+  const isRedirect = !nativeInstructions;
 
   const serverStatus = statusRow?.transaction_status ?? "";
   const isSettled = PACKAGE_PAYMENT_SUCCESS_STATUSES.includes(serverStatus);
@@ -76,14 +80,53 @@ export const PackagePaymentView = () => {
     if (remainingMs <= 0 && !isSettled && !backendExpired) refetch(); // triggers backend lazy expire
   }, [remainingMs, isSettled, backendExpired, refetch]);
 
-  // Open Snap once for redirect rows only — keeps this page as status host.
+  // Popup first, redirect page as fallback — keeps this page as status host.
+  const snapBusyRef = useRef(false);
+  const openSnap = useCallback(async () => {
+    if (isSettled || isFailed || isExpired || snapBusyRef.current) return;
+    snapBusyRef.current = true;
+    const release = () => {
+      snapBusyRef.current = false;
+    };
+    if (snapToken) {
+      try {
+        await loadSnap();
+        if (window.snap) {
+          window.snap.pay(snapToken, {
+            onSuccess: () => {
+              release();
+              void refetch();
+            },
+            onPending: () => {
+              release();
+              void refetch();
+            },
+            onError: () => {
+              release();
+              void refetch();
+            },
+            onClose: () => {
+              release();
+              void refetch();
+            },
+          });
+          return;
+        }
+      } catch {
+        // fall through to the Snap page
+      }
+    }
+    release();
+    if (snapUrl) window.open(snapUrl, "_blank", "noopener,noreferrer");
+  }, [snapToken, snapUrl, isSettled, isFailed, isExpired, refetch]);
+
   const hasOpenedRef = useRef(false);
   useEffect(() => {
-    if (!isRedirect || !snapUrl || hasOpenedRef.current || isSettled || isExpired) return;
+    if (!isRedirect || hasOpenedRef.current || isSettled || isExpired) return;
+    if (!snapToken && !snapUrl) return;
     hasOpenedRef.current = true;
-    const w = window.open(snapUrl, "_blank", "noopener,noreferrer");
-    if (!w) hasOpenedRef.current = false;
-  }, [isRedirect, snapUrl, isSettled, isExpired]);
+    void openSnap();
+  }, [isRedirect, snapToken, snapUrl, isSettled, isExpired, openSnap]);
 
   const item = packageData?.data;
   // Same new-members-only guard as list/detail. Only hard-block when the
@@ -180,7 +223,7 @@ export const PackagePaymentView = () => {
               </span>
               <div>
                 <p className="font-semibold">Midtrans Payment</p>
-                <p className="text-xs text-brand-500/60">{nativeInstructions ? "Secure payment in this page" : "Opened in new tab"}</p>
+                <p className="text-xs text-brand-500/60">{nativeInstructions ? "Secure payment in this page" : "Secure payment window"}</p>
               </div>
             </div>
             {!isExpired && !isFailed && (
@@ -205,13 +248,24 @@ export const PackagePaymentView = () => {
             />
           )}
 
-          {isRedirect && snapUrl && !isExpired && !isFailed && (
+          {isRedirect && (snapToken || snapUrl) && !isExpired && !isFailed && (
             <div className="mb-4 rounded-xl border border-brand-200 bg-brand-25 p-4">
-              <p className="text-sm font-medium text-brand-700">Payment page opened in new tab</p>
+              <p className="text-sm font-medium text-brand-700">{snapToken ? "Secure payment window" : "Payment page"}</p>
               <p className="mt-1 text-xs text-brand-500/70">If it didn&apos;t open, click below. Keep this page open — we&apos;ll auto-detect success.</p>
-              <Button className="mt-3 w-full" onClick={() => window.open(snapUrl, "_blank", "noopener,noreferrer")}>
-                <ExternalLink className="h-4 w-4" /> Open Midtrans Payment Page
+              <Button className="mt-3 w-full" onClick={() => void openSnap()}>
+                <ExternalLink className="h-4 w-4" /> {snapToken ? "Open Payment Window" : "Open Midtrans Payment Page"}
               </Button>
+              {snapUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.href = snapUrl;
+                  }}
+                  className="mt-2 w-full text-center text-xs font-medium text-brand-500/70 underline underline-offset-2"
+                >
+                  Trouble opening it? Continue on the payment page
+                </button>
+              )}
             </div>
           )}
 
@@ -246,12 +300,23 @@ export const PackagePaymentView = () => {
             </div>
           </div>
 
-          {isPending && (
+          {isPending && (nativeInstructions || snapToken || snapUrl) && (
             <div className="mt-4 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 p-4">
               <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
               <p className="text-sm font-medium text-blue-700">
                 Waiting for payment confirmation{serverStatus ? ` (${humanizePaymentStatus(serverStatus)})` : ""}…
               </p>
+            </div>
+          )}
+
+          {isPending && !nativeInstructions && !snapToken && !snapUrl && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-800">
+                Payment details are unavailable. Refresh the status or start a new payment.
+              </p>
+              <Button variant="outline" className="mt-3 w-full" onClick={() => refetch()}>
+                Refresh status
+              </Button>
             </div>
           )}
 
@@ -277,12 +342,12 @@ export const PackagePaymentView = () => {
                 Try Again
               </Button>
             )}
-            {isRedirect && snapUrl && isPending && (
+            {isRedirect && (snapToken || snapUrl) && isPending && (
               <button
-                onClick={() => window.open(snapUrl, "_blank", "noopener,noreferrer")}
+                onClick={() => void openSnap()}
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-500 bg-white py-3 font-semibold text-brand-500 transition-colors hover:bg-brand-25"
               >
-                <ExternalLink className="h-4 w-4" /> Re-open Payment Page
+                <ExternalLink className="h-4 w-4" /> {snapToken ? "Re-open Payment Window" : "Re-open Payment Page"}
               </button>
             )}
             <button

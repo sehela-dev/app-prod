@@ -1,7 +1,6 @@
 "use client";
 
 import { getOrderApiError } from "@/api-req/customer-app";
-import { PaymentChannelList } from "@/components/general/payment-channel-list";
 import { StickyContainerComponent } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCart } from "@/context/cart.ctx";
 import { useValidateVoucher } from "@/hooks/api/mutations/customers";
 import { useCreateProductOrder, useGetAddresses } from "@/hooks/api/queries/customer/orders";
-import { useGetPaymentChannels } from "@/hooks/api/queries/customer/payments";
-import { ENABLE_MEMBER_VOUCHER_LIFECYCLE, ENABLE_NATIVE_PAYMENT } from "@/lib/config";
+import { ENABLE_MEMBER_VOUCHER_LIFECYCLE } from "@/lib/config";
 import { formatCurrency } from "@/lib/helper";
 import { getVoucherErrorMessage, isVoucherErrorCode, VOUCHER_HELD_NOTE, VOUCHER_PREVIEW_NOTE } from "@/lib/voucher";
 import { cn } from "@/lib/utils";
@@ -50,18 +48,13 @@ export const CartCheckoutView = () => {
   const [deliveryMethod, setDeliveryMethod] = useState<"pickup" | "third_party">("pickup");
   const [addressId, setAddressId] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
-  const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [voucherInput, setVoucherInput] = useState("");
   const [appliedVoucher, setAppliedVoucher] = useState<IValidateVoucherResponse | null>(null);
   const [voucherError, setVoucherError] = useState<string | null>(null);
   const checkoutSucceeded = useRef(false);
   const { mutateAsync: validateVoucherAsync, isPending: voucherValidating } = useValidateVoucher();
-  const { data: channelsData, isLoading: channelsLoading } = useGetPaymentChannels(ENABLE_NATIVE_PAYMENT);
-  const channels = channelsData?.data ?? [];
   const discount = appliedVoucher?.calculated_discount ?? 0;
   const total = appliedVoucher?.discounted_total_idr ?? subtotal;
-  const requiresChannel = ENABLE_NATIVE_PAYMENT && channels.length > 0 && total > 0;
-  const selectedChannelLabel = channels.find((channel) => channel.code === selectedChannel)?.label;
 
   useEffect(() => {
     if (addressId || addresses.length === 0) return;
@@ -117,10 +110,6 @@ export const CartCheckoutView = () => {
       toast.error("Please choose a delivery address.");
       return;
     }
-    if (requiresChannel && !selectedChannel) {
-      toast.error("Please choose a payment method.");
-      return;
-    }
 
     try {
       const res = await mutateAsync({
@@ -129,7 +118,6 @@ export const CartCheckoutView = () => {
         ...(deliveryMethod === "third_party" && addressId ? { address_id: addressId } : null),
         items: items.map((item) => ({ variant_id: item.variant_id, quantity: item.quantity })),
         ...(notes.trim() ? { notes: notes.trim() } : null),
-        ...(requiresChannel && selectedChannel ? { payment_channel: selectedChannel } : {}),
         ...(appliedVoucher?.voucher_code ? { voucher_code: appliedVoucher.voucher_code } : {}),
       });
       // Clear the cart only after a successful create; suppress the empty-cart
@@ -142,7 +130,12 @@ export const CartCheckoutView = () => {
         router.replace(`/profile/orders/${res.order_id}`);
         return;
       }
-      router.replace(`/profile/orders/${res.order_id}/payment`);
+      // Pass the create-time Snap fields so the payment page can open the
+      // popup without waiting for a second status fetch.
+      const qs = new URLSearchParams();
+      if (res.snap_token) qs.set("snap_token", res.snap_token);
+      if (res.snap_redirect_url) qs.set("snap_redirect_url", res.snap_redirect_url);
+      router.replace(`/profile/orders/${res.order_id}/payment${qs.size ? `?${qs.toString()}` : ""}`);
     } catch (error) {
       const { code, message, details } = getOrderApiError(error);
       const fieldMessage = details ? Object.values(details)[0]?.[0] : undefined;
@@ -271,18 +264,6 @@ export const CartCheckoutView = () => {
           </div>
         )}
 
-        {requiresChannel && (
-          <div className="flex flex-col gap-2">
-            <p className="text-base font-bold">Payment method</p>
-            <PaymentChannelList
-              channels={channels}
-              selected={selectedChannel}
-              onSelect={(code) => setSelectedChannel(code)}
-            />
-            {selectedChannelLabel && <p className="text-xs text-brand-400">Selected: {selectedChannelLabel}</p>}
-          </div>
-        )}
-
         <div className="flex flex-col gap-2">
           <p className="text-base font-bold">Kode diskon</p>
           <div className="flex items-center gap-2">
@@ -380,9 +361,7 @@ export const CartCheckoutView = () => {
               disabled={
                 isPending ||
                 hasMixedLocations ||
-                (ENABLE_NATIVE_PAYMENT && channelsLoading && total > 0) ||
-                (deliveryMethod === "third_party" && !addressId) ||
-                (requiresChannel && !selectedChannel)
+                (deliveryMethod === "third_party" && !addressId)
               }
               onClick={handleCheckout}
             >

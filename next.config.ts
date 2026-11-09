@@ -23,8 +23,7 @@ const nextConfig: NextConfig = {
     // FE-12 stays behind this flag until D-16 (sandbox) is signed off.
     ENABLE_PAYMENT_CHANGE: process.env.NEXT_PUBLIC_ENABLE_PAYMENT_CHANGE,
 
-    // FE-19 native VA/QRIS/GoPay page; off keeps the Snap-only flow.
-    ENABLE_NATIVE_PAYMENT: process.env.NEXT_PUBLIC_ENABLE_NATIVE_PAYMENT,
+    // FE-19 native VA/QRIS page is hard-off in code (prod is Snap-only).
 
     // Member discount rollout: dev defaults on; prod set the env flag explicitly
     // after the BE-04/05/06/07 smoke passes.
