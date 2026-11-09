@@ -14,4 +14,5 @@ export * from "./use-cancel-booking";
 export * from "./use-validate-voucher";
 export * from "./use-join-waitlist";
 export * from "./use-initiate-package-purchase";
+export * from "./use-retry-package-payment";
 export * from "./use-share-package-purchase";

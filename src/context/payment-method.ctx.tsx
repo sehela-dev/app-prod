@@ -12,7 +12,7 @@ interface IPaymentMethodType {
 const PaymentMethodContext = createContext<IPaymentMethodType | undefined>(undefined);
 
 export function PaymentMethodProvider({ children }: { children: React.ReactNode }) {
-  const [paymentType, setPaymentType] = useState<IPaymentMethodType["paymentType"]>("credit");
+  const [paymentType, setPaymentType] = useState<IPaymentMethodType["paymentType"]>("cash");
 
   const ctxValue = useMemo(
     () => ({

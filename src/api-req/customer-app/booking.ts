@@ -6,10 +6,10 @@ import {
   ICreatePublicBookingRequest,
   IEligibleCreditsParams,
   TCancelBooking,
+  TBookingPaymentSession,
   TCreateBooking,
   TCreatePublicBooking,
   TEligibleCreditsResponse,
-  TRepayBooking,
   TValidateVoucher,
 } from "@/types/customer-app/booking.interface";
 
@@ -30,8 +30,11 @@ export const createPublicBooking: TCreatePublicBooking = async (body: ICreatePub
   return res.data;
 };
 
-export const repayBooking: TRepayBooking = async (bookingId: string) => {
-  const res = await axiosx(true).post(`${MAIN_API_URL}/profile/bookings/${bookingId}/repay`);
+export const createBookingPaymentSession: TBookingPaymentSession = async ({ bookingId, intent, payment_channel }) => {
+  const res = await axiosx(true).post(`${MAIN_API_URL}/profile/bookings/${bookingId}/payment-session`, {
+    intent,
+    ...(payment_channel ? { payment_channel } : {}),
+  });
   return res.data;
 };
 

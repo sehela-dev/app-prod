@@ -5,13 +5,25 @@ import { toast } from "sonner";
 import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { repayBooking } from "@/api-req/customer-app";
+import { createBookingPaymentSession } from "@/api-req/customer-app";
+import { getVoucherErrorMessage } from "@/lib/voucher";
+
+const ERROR_COPY: Record<string, string> = {
+  PAYMENT_STILL_ACTIVE: "Your payment is still active. Reopen the existing payment window.",
+  PAYMENT_ALREADY_SETTLED: "Pembayaran sudah lunas",
+  PAYMENT_NOT_PENDING: "This payment is no longer pending. Refresh the page.",
+  CHANNEL_UNAVAILABLE: "This payment method is unavailable. Please pick another one.",
+  CHANNEL_DISABLED: "This payment method is unavailable. Please pick another one.",
+  PAYMENT_INSTRUCTIONS_UNAVAILABLE: "We couldn't prepare this payment. Please try again.",
+  BOOKING_EXPIRED: "This booking has expired. Please make a new booking.",
+  MIDTRANS_UNREACHABLE: "Tidak bisa memverifikasi pembayaran, coba lagi.",
+};
 
 export const useRepayBooking = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: repayBooking,
+    mutationFn: createBookingPaymentSession,
     ...useConfig(queryClient),
   });
 };
@@ -20,25 +32,21 @@ const useConfig = (queryClient: ReturnType<typeof useQueryClient>) => {
   const onError = useCallback(
     (error: AxiosError<any>) => {
       const responseError = error?.response?.data?.error;
-      // 410 BOOKING_EXPIRED — 15m lazy expiry, pending_payment → expired
-      if (responseError?.code === "BOOKING_EXPIRED" || error?.response?.status === 410) {
+      const code = responseError?.code as string | undefined;
+
+      if (code === "BOOKING_EXPIRED" || error?.response?.status === 410) {
         queryClient.invalidateQueries({ queryKey: ["user", "profile", "my-session"] });
-        return toast.error("Booking Expired", {
-          id: "error",
-          description: responseError?.message ?? "Payment window 15m exceeded (payment_expired). Please make a new booking.",
-          position: "top-center",
-        });
       }
-      if (error?.response && error?.response?.status < 500) {
-        return toast.error(responseError?.code ?? "ERROR", {
-          id: "error",
-          description: responseError?.message ?? "Unable to retry payment. Please try again.",
-          position: "top-center",
-        });
+      if (code === "PAYMENT_STILL_ACTIVE" || code === "PAYMENT_ALREADY_SETTLED" || code === "PAYMENT_NOT_PENDING") {
+        queryClient.invalidateQueries({ queryKey: ["user", "profile", "my-session"] });
       }
-      return toast.error("Something Wrong!", {
+      if (code === "CHANNEL_UNAVAILABLE" || code === "CHANNEL_DISABLED") {
+        queryClient.invalidateQueries({ queryKey: ["customer", "payment-channels"] });
+      }
+
+      return toast.error(code ?? "ERROR", {
         id: "error",
-        description: "Please try again later!",
+        description: getVoucherErrorMessage(code) || (code && ERROR_COPY[code]) || responseError?.message || "Unable to start a payment. Please try again.",
         position: "top-center",
       });
     },
@@ -49,12 +57,11 @@ const useConfig = (queryClient: ReturnType<typeof useQueryClient>) => {
     (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["user", "profile", "my-session"] });
       queryClient.invalidateQueries({ queryKey: ["user", "payments"] });
-      toast.success("New Payment Session Created!", {
+      toast.success("New payment session created", {
         id: "success",
-        description: "Redirecting to payment page...",
+        description: "Opening the payment window...",
         position: "top-center",
       });
-      // Return data so component can use it for redirect
       return data;
     },
     [queryClient],

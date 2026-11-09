@@ -54,6 +54,8 @@ export const OrderDetailView = () => {
 
   const isThirdParty = order.delivery_method === "third_party";
   const canComplete = isThirdParty && order.fulfillment_status === "shipped";
+  const discount = order.voucher_discount_idr ?? 0;
+  const totalPaid = Math.max(0, order.total_price_idr - discount);
 
   return (
     <div className="flex flex-col w-full font-serif h-full text-brand-500">
@@ -77,6 +79,15 @@ export const OrderDetailView = () => {
           </div>
         </div>
 
+        {order.payment_status === "pending" && (
+          <Button
+            className="min-h-12 w-full text-sm font-extrabold"
+            onClick={() => router.push(`/profile/orders/${order.id}/payment`)}
+          >
+            Continue payment
+          </Button>
+        )}
+
         <div className="rounded-xl border border-brand-100 bg-brand-25 p-4">
           <p className="mb-2 text-sm font-bold">Items</p>
           <div className="flex flex-col gap-2">
@@ -93,9 +104,21 @@ export const OrderDetailView = () => {
               </div>
             ))}
           </div>
-          <div className="mt-3 flex items-center justify-between border-t border-brand-100 pt-3">
-            <span className="text-sm font-bold">Total</span>
-            <span className="text-sm font-bold">{formatCurrency(order.total_price_idr)}</span>
+          <div className="mt-3 flex items-center justify-between border-t border-brand-100 pt-3 text-sm">
+            <span className="text-brand-400">Subtotal</span>
+            <span className="font-semibold">{formatCurrency(order.total_price_idr)}</span>
+          </div>
+          {discount > 0 && (
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span className="text-brand-400">
+                Kode diskon{order.voucher_code ? ` (${order.voucher_code})` : ""}
+              </span>
+              <span className="font-semibold text-emerald-700">- {formatCurrency(discount)}</span>
+            </div>
+          )}
+          <div className="mt-2 flex items-center justify-between border-t border-brand-100 pt-2">
+            <span className="text-sm font-bold">Total dibayar</span>
+            <span className="text-sm font-bold">{totalPaid === 0 && discount > 0 ? "Gratis" : formatCurrency(totalPaid)}</span>
           </div>
         </div>
 
@@ -163,7 +186,7 @@ export const OrderDetailView = () => {
       {canComplete && (
         <div className="sticky bottom-16 flex w-full bg-brand-50 p-4">
           <Button className="w-full" disabled={completeOrder.isPending} onClick={handleComplete}>
-            {completeOrder.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Pesanan diterima"}
+            {completeOrder.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Order received"}
           </Button>
         </div>
       )}

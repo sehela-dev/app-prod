@@ -14,6 +14,7 @@ import {
   getPendingPackagePayment,
   humanizePaymentStatus,
 } from "@/lib/pending-package-payment";
+import { NativeInstructionsComponent } from "@/view/payment/native-instructions";
 import { AlertCircle, CheckCircle, Clock, ExternalLink, GemIcon, Loader2 } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -38,19 +39,24 @@ export const PackagePaymentView = () => {
   const stored = getPendingPackagePayment();
   const storedMatch = stored && (!orderId || stored.order_id === orderId) ? stored : null;
   const snapUrl = snapParam || storedMatch?.snap_redirect_url || statusRow?.snap_redirect_url || null;
+  const pi = statusRow?.payment_instructions ?? null;
+  const isRedirect = pi?.type === "redirect" || (!pi && Boolean(snapUrl));
+  const nativeInstructions = pi && pi.type !== "redirect" ? pi : null;
 
   const serverStatus = statusRow?.transaction_status ?? "";
   const isSettled = PACKAGE_PAYMENT_SUCCESS_STATUSES.includes(serverStatus);
   const isFailed = PACKAGE_PAYMENT_FAILURE_STATUSES.includes(serverStatus);
 
-  // Expiry anchor: server expires_at > row created_at + 15m > initiate-time + 15m
-  const expiresAtMs = expiresParam
-    ? Date.parse(expiresParam)
-    : statusRow?.expires_at
-      ? Date.parse(statusRow.expires_at)
-      : (statusRow?.created_at || createdParam)
-        ? Date.parse(String(statusRow?.created_at ?? createdParam)) + 15 * 60 * 1000
-        : (storedMatch?.initiated_at ?? Date.now()) + 15 * 60 * 1000;
+  // Expiry anchor: instructions > server expires_at > row created_at + 15m > initiate-time + 15m
+  const expiresAtMs = pi?.expires_at
+    ? Date.parse(pi.expires_at)
+    : expiresParam
+      ? Date.parse(expiresParam)
+      : statusRow?.expires_at
+        ? Date.parse(statusRow.expires_at)
+        : (statusRow?.created_at || createdParam)
+          ? Date.parse(String(statusRow?.created_at ?? createdParam)) + 15 * 60 * 1000
+          : (storedMatch?.initiated_at ?? Date.now()) + 15 * 60 * 1000;
 
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -70,14 +76,14 @@ export const PackagePaymentView = () => {
     if (remainingMs <= 0 && !isSettled && !backendExpired) refetch(); // triggers backend lazy expire
   }, [remainingMs, isSettled, backendExpired, refetch]);
 
-  // Open Midtrans in a new tab once — keeps this page as status host
+  // Open Snap once for redirect rows only — keeps this page as status host.
   const hasOpenedRef = useRef(false);
   useEffect(() => {
-    if (!snapUrl || hasOpenedRef.current || isSettled || isExpired) return;
+    if (!isRedirect || !snapUrl || hasOpenedRef.current || isSettled || isExpired) return;
     hasOpenedRef.current = true;
     const w = window.open(snapUrl, "_blank", "noopener,noreferrer");
     if (!w) hasOpenedRef.current = false;
-  }, [snapUrl, isSettled, isExpired]);
+  }, [isRedirect, snapUrl, isSettled, isExpired]);
 
   const item = packageData?.data;
   // Same new-members-only guard as list/detail. Only hard-block when the
@@ -139,7 +145,7 @@ export const PackagePaymentView = () => {
             <div className="flex justify-between">
               <span className="text-brand-500/60">Amount</span>
               <span className="font-bold text-brand-700">
-                {item ? formatCurrency(String(item.price_idr)) : `Rp ${Number(statusRow?.gross_amount ?? 0).toLocaleString("id-ID")}`}
+                {formatCurrency(statusRow?.amount_idr ?? statusRow?.gross_amount_idr ?? item?.price_idr ?? 0)}
               </span>
             </div>
             <div className="flex justify-between">
@@ -162,7 +168,9 @@ export const PackagePaymentView = () => {
     <div className="flex flex-col w-full font-serif h-full text-brand-500">
       <NavHeaderComponent title="Complete Your Payment" />
       <div className="flex flex-col gap-4 px-4 mt-4 pb-6">
-        <p className="-mt-2 text-center text-xs text-brand-500/60">Pay via Midtrans in new tab — we&apos;ll confirm here</p>
+        <p className="-mt-2 text-center text-xs text-brand-500/60">
+          {nativeInstructions ? "Complete your payment here — we'll confirm automatically" : "Pay via Midtrans — we'll confirm here"}
+        </p>
 
         <div className="rounded-2xl border border-brand-100 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
@@ -172,7 +180,7 @@ export const PackagePaymentView = () => {
               </span>
               <div>
                 <p className="font-semibold">Midtrans Payment</p>
-                <p className="text-xs text-brand-500/60">Opened in new tab</p>
+                <p className="text-xs text-brand-500/60">{nativeInstructions ? "Secure payment in this page" : "Opened in new tab"}</p>
               </div>
             </div>
             {!isExpired && !isFailed && (
@@ -183,7 +191,21 @@ export const PackagePaymentView = () => {
             )}
           </div>
 
-          {snapUrl && !isExpired && !isFailed && (
+          {nativeInstructions && isPending && (
+            <NativeInstructionsComponent
+              instructions={nativeInstructions}
+              amountIdr={
+                statusRow?.amount_idr ??
+                statusRow?.gross_amount_idr ??
+                item?.price_idr ??
+                0
+              }
+              channelLabel={statusRow?.channel_label}
+              remainingMs={remainingMs}
+            />
+          )}
+
+          {isRedirect && snapUrl && !isExpired && !isFailed && (
             <div className="mb-4 rounded-xl border border-brand-200 bg-brand-25 p-4">
               <p className="text-sm font-medium text-brand-700">Payment page opened in new tab</p>
               <p className="mt-1 text-xs text-brand-500/70">If it didn&apos;t open, click below. Keep this page open — we&apos;ll auto-detect success.</p>
@@ -209,7 +231,12 @@ export const PackagePaymentView = () => {
               <div className="flex justify-between gap-3">
                 <span className="text-brand-500/60">Amount</span>
                 <span className="text-lg font-bold">
-                  {item ? formatCurrency(String(item.price_idr)) : `Rp ${Number(statusRow?.gross_amount ?? 0).toLocaleString("id-ID")}`}
+                  {formatCurrency(
+                    statusRow?.amount_idr ??
+                    statusRow?.gross_amount_idr ??
+                    item?.price_idr ??
+                    0,
+                  )}
                 </span>
               </div>
               <div className="flex justify-between gap-3">
@@ -250,7 +277,7 @@ export const PackagePaymentView = () => {
                 Try Again
               </Button>
             )}
-            {snapUrl && isPending && (
+            {isRedirect && snapUrl && isPending && (
               <button
                 onClick={() => window.open(snapUrl, "_blank", "noopener,noreferrer")}
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-500 bg-white py-3 font-semibold text-brand-500 transition-colors hover:bg-brand-25"

@@ -73,11 +73,6 @@ export const SessionDetailView = () => {
   const { data: waitlist } = useGetWaitlistStatus(sessionId, isAuthReady && isAuthenticated);
   const { mutate: joinWaitlist, isPending: joinPending } = useJoinWaitlist();
 
-  const onCheckoutSession = (paymentMethod: "credit" | "cash") => {
-    onChangePaymentMethod(paymentMethod);
-    router.push(`/checkout/${sessionId}`);
-  };
-
   const handleNotify = () => {
     if (!isAuthenticated) {
       router.push(`/auth/login?next=${encodeURIComponent(`/book/session/${sessionId}`)}`);
@@ -132,6 +127,12 @@ export const SessionDetailView = () => {
   const isBookable = session.status?.toLowerCase() !== "canceled" && new Date(session.start_datetime).getTime() > Date.now();
   const isWaitlisted = justJoined || !!waitlist?.data?.is_waitlisted;
   const myBookingStatus = waitlist?.data?.is_booked ? (waitlist.data.booking_status ?? "") : "";
+
+  const onCheckoutSession = () => {
+    // Normal sessions start on Pay online; credit-only sessions start on credits.
+    onChangePaymentMethod(isCreditOnly && allowCredit ? "credit" : "cash");
+    router.push(`/checkout/${sessionId}`);
+  };
 
   return (
     <>
@@ -264,11 +265,11 @@ export const SessionDetailView = () => {
                   }
                 />
               )}
-              <p className="text-xs text-brand-500/60">Credit only — drop-in payment not available.</p>
+              <p className="text-xs text-brand-500/60">Credit only — online payment is not available.</p>
             </>
           ) : (
             <>
-              {session.price_idr > 0 && <InfoRow label="Drop In" value={`Rp ${session.price_idr.toLocaleString("id-ID")}`} />}
+              {session.price_idr > 0 && <InfoRow label="Price" value={`Rp ${session.price_idr.toLocaleString("id-ID")}`} />}
               {allowCredit && (
                 <InfoRow
                   label="Credit"
@@ -280,7 +281,7 @@ export const SessionDetailView = () => {
                 />
               )}
               {allowCredit && session.price_idr > 0 && (
-                <p className="text-xs text-brand-500/60">Pay with drop-in or credits — whichever suits you.</p>
+                <p className="text-xs text-brand-500/60">Pay with money or credits — whichever suits you.</p>
               )}
             </>
           )}
@@ -323,7 +324,7 @@ export const SessionDetailView = () => {
                     onClick={handleNotify}
                     disabled={isWaitlisted || joinPending}
                   >
-                    {isWaitlisted ? "You're on the list" : "Notify me"}
+                    {isWaitlisted ? "You're on the list" : "Join Waiting List"}
                   </Button>
                   <p className="text-xs text-brand-500/60">{"No slot is held — you'll be emailed if one opens up."}</p>
                 </>
@@ -332,39 +333,13 @@ export const SessionDetailView = () => {
                   className="font-extrabold !text-gray-50 h-12 w-full"
                   onClick={() => router.push(`/auth/login?next=${encodeURIComponent(`/book/session/${id as string}`)}`)}
                 >
-                  Join Now
+                  Book Session
                 </Button>
               ) : (
-            <div className="flex flex-row items-center justify-between gap-4">
-              {allowCredit && !isCreditOnly && (
-                <>
-                  <div className="w-full">
-                    <Button
-                      className="font-extrabold h-12 w-full !bg-brand-50"
-                      variant="secondary"
-                      onClick={() => onCheckoutSession("credit")}
-                    >
-                      <Gem /> {session.price_credit_amount} Credit
-                    </Button>
-                  </div>
-                  <p className="font-normal text-xs">Or</p>
-                </>
+                <Button className="font-extrabold !text-gray-50 h-12 w-full" onClick={onCheckoutSession}>
+                  Book Session
+                </Button>
               )}
-              {allowCredit && isCreditOnly ? (
-                <div className="w-full">
-                  <Button className="font-extrabold h-12 w-full !bg-brand-50" variant="secondary" onClick={() => onCheckoutSession("credit")}>
-                    <Gem /> {session.price_credit_amount} Credit
-                  </Button>
-                </div>
-              ) : !isCreditOnly ? (
-                <div className="w-full">
-                  <Button className="font-extrabold !text-gray-50 h-12 w-full" onClick={() => onCheckoutSession("cash")}>
-                    {session.price_idr > 0 ? `Rp. ${session.price_idr.toLocaleString("id-ID")}` : "Free"}
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          )}
         </div>
       </StickyContainerComponent>
     </>

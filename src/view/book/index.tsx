@@ -143,26 +143,30 @@ function SessionDateStrip({ selectedDate, onSelect }: { selectedDate?: string; o
           })}
         </div>
 
-        {canPrev && (
-          <button
-            type="button"
-            aria-label="Previous dates"
-            onClick={() => scrollBy(-1)}
-            className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-2 size-7 rounded-full bg-white border border-zinc-200 shadow-sm flex items-center justify-center text-zinc-600 hover:bg-zinc-900 hover:text-white hover:border-zinc-900 transition-colors cursor-pointer"
-          >
-            <ChevronLeft size={14} />
-          </button>
-        )}
-        {canNext && (
-          <button
-            type="button"
-            aria-label="Next dates"
-            onClick={() => scrollBy(1)}
-            className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-2 size-7 rounded-full bg-white border border-zinc-200 shadow-sm flex items-center justify-center text-zinc-600 hover:bg-zinc-900 hover:text-white hover:border-zinc-900 transition-colors cursor-pointer"
-          >
-            <ChevronRight size={14} />
-          </button>
-        )}
+        <button
+          type="button"
+          aria-label="Previous dates"
+          onClick={() => scrollBy(-1)}
+          disabled={!canPrev}
+          className={cn(
+            "absolute left-0 top-1/2 -translate-y-1/2 -translate-x-2 size-7 rounded-full bg-white border border-zinc-200 shadow-sm flex items-center justify-center text-zinc-600 transition-colors cursor-pointer",
+            canPrev ? "hover:bg-zinc-900 hover:text-white hover:border-zinc-900" : "opacity-40 cursor-default",
+          )}
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <button
+          type="button"
+          aria-label="Next dates"
+          onClick={() => scrollBy(1)}
+          disabled={!canNext}
+          className={cn(
+            "absolute right-0 top-1/2 -translate-y-1/2 translate-x-2 size-7 rounded-full bg-white border border-zinc-200 shadow-sm flex items-center justify-center text-zinc-600 transition-colors cursor-pointer",
+            canNext ? "hover:bg-zinc-900 hover:text-white hover:border-zinc-900" : "opacity-40 cursor-default",
+          )}
+        >
+          <ChevronRight size={14} />
+        </button>
       </div>
     </div>
   );
@@ -372,8 +376,6 @@ export const BookClassView = () => {
         <button onClick={handleBack} className="flex items-center gap-2 text-sm font-semibold w-fit cursor-pointer hover:opacity-70">
           <ChevronLeft size={18} /> Back
         </button>
-
-
 
         <div className="flex flex-col gap-4">
           <h3 className="text-xl font-extrabold">Upcoming Sessions</h3>

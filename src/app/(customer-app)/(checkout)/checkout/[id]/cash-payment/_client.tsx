@@ -1,62 +1,143 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Loader2, QrCode, Clock, CheckCircle, AlertCircle, CreditCard, Home, ExternalLink } from "lucide-react";
+import { Loader2, QrCode, Clock, CheckCircle, AlertCircle, CreditCard, ExternalLink } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
+import { useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
 import { useGetMySessionDetail } from "@/hooks/api/queries/customer/profile";
+import { useRemainingTime } from "@/hooks/use-remaining-time";
 import { formatDateHelper, normalizeOrderId } from "@/lib/helper";
+import { ENABLE_MEMBER_VOUCHER_LIFECYCLE } from "@/lib/config";
+import { VOUCHER_HELD_NOTE, VOUCHER_RELEASED_NOTE } from "@/lib/voucher";
+import { isPaymentFailure, isPaymentSuccess, isPaymentTerminal } from "@/lib/payment-status";
+import { loadSnap } from "@/lib/snap";
+import { NativeInstructionsComponent } from "@/view/payment/native-instructions";
 
 const PAYMENT_TIMEOUT_MS = 15 * 60 * 1000; // 15m after bookings.created_at — matches expire_stale_pending_bookings
 
 export default function CashPaymentPage() {
   const router = useRouter();
+  const params = useParams();
   const searchParams = useSearchParams();
-  const { id } = useParams();
-  const sessionId = typeof id === "string" ? id : undefined;
+  const sessionId = typeof params.id === "string" ? params.id : null;
   const bookingId = searchParams.get("booking_id") as string | null;
   const snapParam = searchParams.get("snap_redirect_url") as string | null;
 
-  const [timeRemaining, setTimeRemaining] = useState(PAYMENT_TIMEOUT_MS);
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
-  const hasOpenedRef = useRef(false);
+  const openedTokenRef = useRef<string | null>(null);
+  const snapBusyRef = useRef(false);
+  const fallbackOpenedRef = useRef(false);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   // Use profile/my-sessions/:id (booking_id) - requested API, not public/sessions or public/bookings
   const { data: detailResp, isLoading, isError, refetch } = useGetMySessionDetail(bookingId ?? undefined);
   const detail = detailResp?.data;
 
-  // snap_redirect_url from profile detail, URL param takes priority for popup-block fallback
-  const snapUrl = snapParam || detail?.payment?.snap_redirect_url || null;
+  const snapToken = detail?.payment?.snap_token ?? null;
+  // URL param kept for old links only; checkout now passes booking_id alone.
+  const snapFallbackUrl = snapParam || detail?.payment?.snap_redirect_url || null;
 
   const bookingStatus = detail?.booking_status ?? null;
   const paymentStatus = detail?.payment?.status ?? null;
   const orderId = detail?.payment?.order_id ?? null;
   const createdAt = (detail as unknown as { created_at?: string })?.created_at ?? null;
+
+  // Native rows have no snap token; legacy rows have a token but no instructions.
+  const pi = detail?.payment?.payment_instructions ?? null;
+  const isRedirect = pi?.type === "redirect" || (!pi && Boolean(snapToken || snapFallbackUrl));
+  const nativeInstructions = pi && pi.type !== "redirect" ? pi : null;
+
+  const createdMs = createdAt ? Date.parse(createdAt) : NaN;
+  const expiresAt = pi?.expires_at ?? (Number.isFinite(createdMs) ? new Date(createdMs + PAYMENT_TIMEOUT_MS).toISOString() : null);
+  const expiryRemainingMs = useRemainingTime(expiresAt);
+  const timeRemaining = expiryRemainingMs ?? PAYMENT_TIMEOUT_MS;
+  const windowExpired = expiryRemainingMs === 0;
+
   // 15m lazy expiry: now - created_at >=15m → expired (backend does it on next fetch)
   const backendExpired = bookingStatus === "expired" || paymentStatus === "expire" || paymentStatus === "expired";
-  const isExpired = backendExpired || timeRemaining === 0;
+  const isExpired = backendExpired || windowExpired;
+  const isPaymentFailed = isPaymentFailure(paymentStatus);
+  const isPaymentSettled = isPaymentSuccess(paymentStatus);
+  const isPending = !isPaymentFailed && !isPaymentSettled && bookingStatus === "pending_payment";
+  const canPay = isPending && !paymentConfirmed && !isExpired;
+  // Poll for every pending row, native or Snap; the hook stops on terminal.
+  const shouldPoll = canPay;
 
-  // Open Midtrans in new tab once — keeps this page as success host
-  useEffect(() => {
-    if (!snapUrl || hasOpenedRef.current || paymentConfirmed || isExpired) return;
-    hasOpenedRef.current = true;
-    const w = window.open(snapUrl, "_blank", "noopener,noreferrer");
-    if (!w) hasOpenedRef.current = false;
-  }, [snapUrl, paymentConfirmed, isExpired]);
+  // Poll while pending so the webhook can confirm without a reload. FE-01 caps it.
+  const { data: statusResp } = useGetPaymentStatus(shouldPoll ? orderId : null);
+  const liveStatus = statusResp?.data?.transaction_status ?? null;
 
-  // Countdown from bookings.created_at + 15m (not fixed 2m)
   useEffect(() => {
-    if (paymentConfirmed || backendExpired || !createdAt) return;
-    const expiresAt = new Date(createdAt).getTime() + PAYMENT_TIMEOUT_MS;
-    const tick = () => {
-      const remaining = expiresAt - Date.now();
-      setTimeRemaining(remaining > 0 ? remaining : 0);
+    if (isPaymentTerminal(liveStatus)) void refetch();
+  }, [liveStatus, refetch]);
+
+  const openSnap = useCallback(async () => {
+    if (!snapToken || !canPay || snapBusyRef.current) return;
+    snapBusyRef.current = true;
+    openedTokenRef.current = snapToken;
+    const release = () => {
+      snapBusyRef.current = false;
     };
-    tick();
-    const interval = setInterval(tick, 1000);
-    return () => clearInterval(interval);
-  }, [paymentConfirmed, backendExpired, createdAt]);
+    try {
+      await loadSnap();
+      if (!aliveRef.current) return;
+      if (!window.snap) throw new Error("Snap is not available");
+      window.snap.pay(snapToken, {
+        onSuccess: () => {
+          release();
+          void refetch();
+        },
+        onPending: () => {
+          release();
+          void refetch();
+        },
+        onError: () => {
+          release();
+          toast.error("Payment failed", { description: "Please try again.", position: "top-center" });
+          void refetch();
+        },
+        // Closing is not a failure: the token stays valid and the user can reopen.
+        onClose: () => {
+          release();
+          void refetch();
+        },
+      });
+    } catch {
+      release();
+      if (!aliveRef.current) return;
+      // No client key / script blocked / CSP: keep the redirect flow alive.
+      if (snapFallbackUrl) {
+        toast.error("Secure payment unavailable", { description: "Opening the payment page instead.", position: "top-center" });
+        window.location.href = snapFallbackUrl;
+      } else {
+        toast.error("Payment page unavailable", { description: "Please refresh and try again.", position: "top-center" });
+      }
+    }
+  }, [snapToken, snapFallbackUrl, canPay, refetch]);
+
+  // Open Snap once per token, redirect rows only. onClose keeps the ref, so it never loops.
+  useEffect(() => {
+    if (!canPay || !isRedirect || !snapToken) return;
+    if (openedTokenRef.current === snapToken) return;
+    void openSnap();
+  }, [canPay, isRedirect, snapToken, openSnap]);
+
+  // No token at all: preserve the old redirect fallback, once.
+  useEffect(() => {
+    if (!canPay || !isRedirect || snapToken || !snapFallbackUrl || fallbackOpenedRef.current) return;
+    fallbackOpenedRef.current = true;
+    window.location.href = snapFallbackUrl;
+  }, [canPay, isRedirect, snapToken, snapFallbackUrl]);
 
   useEffect(() => {
     if (bookingStatus === "confirmed" || paymentStatus === "paid" || paymentStatus === "settlement" || paymentStatus === "capture") {
@@ -65,8 +146,8 @@ export default function CashPaymentPage() {
   }, [bookingStatus, paymentStatus]);
 
   useEffect(() => {
-    if (timeRemaining === 0 && !paymentConfirmed && !backendExpired) refetch(); // triggers backend lazy expire
-  }, [timeRemaining, paymentConfirmed, backendExpired, refetch]);
+    if (windowExpired && !paymentConfirmed && !backendExpired) refetch(); // triggers backend lazy expire
+  }, [windowExpired, paymentConfirmed, backendExpired, refetch]);
 
   if (isLoading) {
     return (
@@ -91,10 +172,7 @@ export default function CashPaymentPage() {
 
   const className = detail?.session_name || detail?.class_name || "Class";
   const startDatetime = detail?.start_datetime || "";
-  const amountIdr = detail?.total_paid_idr ?? detail?.price_idr ?? 0;
-  const qrisUrl: string | null = null;
-  const instructions: string | null = null;
-  const isPending = bookingStatus === "pending_payment" || paymentStatus === "pending";
+  const amountIdr = detail?.amount_paid_idr ?? detail?.total_paid_idr ?? detail?.original_amount_idr ?? detail?.price_idr ?? 0;
 
   const formatTime = (ms: number) => {
     const mins = Math.floor(ms / 60000);
@@ -190,7 +268,7 @@ export default function CashPaymentPage() {
       <div className="flex w-full max-w-md mx-auto px-4 py-8 flex-col gap-6">
         <div className="text-center">
           <h1 className="font-bold text-2xl text-brand-500">Complete Your Payment</h1>
-          <p className="text-brand-500/60 mt-1">Pay via Midtrans in new tab — we&apos;ll confirm here</p>
+          <p className="text-brand-500/60 mt-1">Complete your payment securely — we&apos;ll confirm here</p>
         </div>
 
         <div className="rounded-2xl border border-brand-100 bg-white p-6 shadow-sm">
@@ -201,7 +279,7 @@ export default function CashPaymentPage() {
               </div>
               <div>
                 <p className="font-semibold text-brand-500">Midtrans Payment</p>
-                <p className="text-xs text-brand-500/60">Opened in new tab</p>
+                <p className="text-xs text-brand-500/60">Secure payment in this page</p>
               </div>
             </div>
             <div className="flex items-center gap-2 rounded-full bg-red-50 px-4 py-1.5">
@@ -211,27 +289,41 @@ export default function CashPaymentPage() {
             </div>
           </div>
 
-          {snapUrl ? (
+          {canPay && nativeInstructions ? (
+            <NativeInstructionsComponent
+              instructions={nativeInstructions}
+              amountIdr={amountIdr}
+              channelLabel={detail?.payment?.channel_label}
+              remainingMs={expiryRemainingMs}
+            />
+          ) : canPay && isRedirect && (snapToken || snapFallbackUrl) ? (
             <div className="rounded-xl border border-brand-200 bg-brand-25 p-4 mb-6">
-              <p className="text-sm font-medium text-brand-700">Payment page opened in new tab</p>
+              <p className="text-sm font-medium text-brand-700">{snapToken ? "Secure payment window" : "Payment page"}</p>
               <p className="text-xs text-brand-500/70 mt-1">If it didn&apos;t open, click below. Keep this page open — we&apos;ll auto-detect success.</p>
-              <Button className="mt-3 w-full rounded-xl bg-brand-500 text-white hover:bg-brand-600" onClick={() => window.open(snapUrl, "_blank", "noopener,noreferrer")}>
+              <Button
+                className="mt-3 w-full rounded-xl bg-brand-500 text-white hover:bg-brand-600"
+                onClick={() => (snapToken ? void openSnap() : snapFallbackUrl && (window.location.href = snapFallbackUrl))}
+              >
                 <ExternalLink className="h-4 w-4" />
-                Open Midtrans Payment Page
+                {snapToken ? "Open Payment Window" : "Open Payment Page"}
               </Button>
-            </div>
-          ) : qrisUrl ? (
-            <div className="flex flex-col items-center gap-4 mb-6">
-              <div className="relative rounded-xl border border-brand-100 bg-white p-4">
-                <img src={qrisUrl} alt="QRIS Payment" className="h-64 w-64 object-contain" />
-              </div>
-              <p className="text-sm text-brand-500/70 text-center">Scan with your e-wallet app (GoPay, OVO, DANA, ShopeePay, etc.)</p>
             </div>
           ) : (
             <div className="rounded-xl border-2 border-dashed border-brand-200 bg-brand-25 p-8 text-center mb-6">
               <CreditCard className="h-12 w-12 mx-auto text-brand-500/50 mb-3" />
               <p className="font-medium text-brand-500">Payment Instructions</p>
-              <p className="text-sm text-brand-500/60 mt-1">{instructions ?? "Payment details will be shown here. Please complete payment at the studio."}</p>
+              <p className="text-sm text-brand-500/60 mt-1">
+                {isExpired ? "Payment window expired. Please make a new booking." : "Payment details are unavailable. Please refresh or contact support."}
+              </p>
+              {canPay && (
+                <Button
+                  variant="outline"
+                  className="mt-3 rounded-xl border-brand-200 text-brand-600"
+                  onClick={() => router.push("/profile/my-sessions")}
+                >
+                  Go to My Class to Retry
+                </Button>
+              )}
             </div>
           )}
 
@@ -262,14 +354,37 @@ export default function CashPaymentPage() {
           {isPending && !isExpired && (
             <div className="flex items-center gap-2 rounded-xl bg-blue-50 border border-blue-100 p-4 mb-4">
               <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
-              <p className="text-sm font-medium text-blue-700">Waiting for payment confirmation...</p>
+              <div>
+                <p className="text-sm font-medium text-blue-700">Waiting for payment confirmation...</p>
+                {ENABLE_MEMBER_VOUCHER_LIFECYCLE && detail?.voucher_code && (
+                  <p className="text-xs text-blue-700/80">{VOUCHER_HELD_NOTE}</p>
+                )}
+              </div>
             </div>
           )}
 
           {isExpired && !paymentConfirmed && (
             <div className="flex items-center gap-2 rounded-xl bg-zinc-50 border border-zinc-200 p-4 mb-4">
               <AlertCircle className="h-5 w-5 text-zinc-600" />
-              <p className="text-sm font-medium text-zinc-700">Booking expired — 15m payment window exceeded (payment_expired). Please make a new booking.</p>
+              <div>
+                <p className="text-sm font-medium text-zinc-700">Booking expired — 15m payment window exceeded (payment_expired). Please make a new booking.</p>
+                {ENABLE_MEMBER_VOUCHER_LIFECYCLE && detail?.voucher_code && (
+                  <p className="text-xs text-zinc-600">{VOUCHER_RELEASED_NOTE}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isPaymentFailed && !isExpired && !paymentConfirmed && (
+            <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 mb-4">
+              <AlertCircle className="h-5 w-5 shrink-0 text-red-600" />
+              <div>
+                <p className="text-sm font-semibold text-red-700">Payment {paymentStatus}</p>
+                <p className="text-xs text-red-600">Go to My Class to retry this booking.</p>
+                {ENABLE_MEMBER_VOUCHER_LIFECYCLE && detail?.voucher_code && (
+                  <p className="text-xs text-red-600">{VOUCHER_RELEASED_NOTE}</p>
+                )}
+              </div>
             </div>
           )}
 
@@ -277,31 +392,29 @@ export default function CashPaymentPage() {
             <Button variant="outline" onClick={() => refetch()} className="w-full rounded-xl border-brand-200 py-3 text-brand-600 font-semibold hover:bg-brand-25">
               I&apos;ve Completed Payment — Check Status
             </Button>
-            {snapUrl && (
+            {isPaymentFailed && !isExpired && !paymentConfirmed && (
+              <Button className="w-full rounded-xl bg-brand-500 text-white hover:bg-brand-600" onClick={() => router.push("/profile/my-sessions")}>
+                Go to My Class
+              </Button>
+            )}
+            {canPay && isRedirect && (snapToken || snapFallbackUrl) && (
               <button
-                onClick={() => window.open(snapUrl, "_blank", "noopener,noreferrer")}
+                onClick={() => (snapToken ? void openSnap() : snapFallbackUrl && (window.location.href = snapFallbackUrl))}
                 className="w-full rounded-xl border border-brand-500 bg-white py-3 text-brand-500 font-semibold transition-colors hover:bg-brand-25 flex items-center justify-center gap-2"
               >
                 <ExternalLink className="h-4 w-4" />
-                Re-open Payment Page
+                {snapToken ? "Re-open Payment Window" : "Re-open Payment Page"}
               </button>
             )}
             <button
-              onClick={() => router.push(`/book`)}
+              onClick={() => router.push(isExpired && sessionId ? `/book/session/${sessionId}` : "/book")}
               className="w-full rounded-xl border border-brand-100 bg-white py-3 text-brand-500 font-semibold transition-colors hover:bg-brand-25"
             >
-              Back to Booking
+              {isExpired && sessionId ? "Back to Session" : "Back to Booking"}
             </button>
           </div>
         </div>
 
-        <div className="rounded-xl border border-brand-100 bg-white p-4 text-center">
-          <div className="flex items-center justify-center gap-2 text-sm text-brand-500/60 mb-2">
-            <Home className="h-4 w-4" />
-            <span>Or pay directly at the studio before class</span>
-          </div>
-          <p className="text-xs text-brand-500/50">Cash and QRIS accepted at front desk. Please arrive 15 minutes early.</p>
-        </div>
       </div>
     </div>
   );

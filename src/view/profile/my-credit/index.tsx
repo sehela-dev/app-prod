@@ -8,6 +8,7 @@ import { getShareErrorMessage } from "@/api-req/customer-app/payments";
 import { useAuthMember } from "@/context/member.ctx";
 import { useSharePackagePurchase } from "@/hooks/api/mutations/customers";
 import { useGetMyCreditsInfinite } from "@/hooks/api/queries/customer/profile";
+import { formatEligibleTime, formatInstructorNames, formatPackageEligibility } from "@/lib/credit-package";
 import { formatDateHelper } from "@/lib/helper";
 import { CalendarClock, Clock3, GemIcon, Loader2, MapPin, Plus, Ticket, Users } from "lucide-react";
 import Image from "next/image";
@@ -156,6 +157,9 @@ export const MyCreditsCardsItem = ({ item, variant = "active" }: IProps) => {
   const showNotStarted = !isExpired && !isDepleted && item.validity_status === "not_started";
   const place = formatRestriction(item.place_restriction);
   const sessionType = formatRestriction(item.session_type_restriction);
+  const instructorNames = formatInstructorNames(item.instructor_ids_restriction);
+  const timeWindow = formatEligibleTime(item.eligible_start_time, item.eligible_end_time);
+  const hasInstructorOrTimeRestriction = !!instructorNames || !!timeWindow;
   // Shareable only when unused: a single credit_spend locks sharing (server enforces SHARE_USED).
   // Received packages can never be re-shared: owner-only and never shared_by someone else.
   const canShare =
@@ -262,6 +266,15 @@ export const MyCreditsCardsItem = ({ item, variant = "active" }: IProps) => {
             <span className="inline-flex items-center gap-1.5 capitalize">
               <MapPin size={12} className={isMuted ? "text-gray-400" : "text-brand-400"} />
               {[place, sessionType].filter(Boolean).join(" · ") || "—"}
+            </span>
+          </>
+        )}
+        {hasInstructorOrTimeRestriction && (
+          <>
+            <span className="h-3 w-px bg-gray-200" />
+            <span className="inline-flex items-center gap-1.5">
+              <Users size={12} className={isMuted ? "text-gray-400" : "text-brand-400"} />
+              {formatPackageEligibility(item)}
             </span>
           </>
         )}

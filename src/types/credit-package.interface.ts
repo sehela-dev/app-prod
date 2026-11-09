@@ -12,6 +12,12 @@ export interface ICreditPackageItem {
     name: string;
     id: string;
   }[];
+  instructor_ids_restriction?: {
+    name: string;
+    id: string;
+  }[] | null;
+  eligible_start_time?: string | null;
+  eligible_end_time?: string | null;
   place_restriction: string;
   package_type: string;
   parent_package_id: string;
@@ -32,6 +38,9 @@ export interface ICreatePackagePayload {
   price_idr: number;
   validity_days: number;
   class_ids_restriction: string | string[];
+  instructor_ids_restriction?: string[] | null;
+  eligible_start_time?: string | null;
+  eligible_end_time?: string | null;
   place_restriction?: string;
   session_type_restriction?: string;
   package_type: string;
@@ -66,6 +75,12 @@ export interface ICreditPackageDetail {
     name: string;
     id: string;
   }[];
+  instructor_ids_restriction?: {
+    name: string;
+    id: string;
+  }[] | null;
+  eligible_start_time?: string | null;
+  eligible_end_time?: string | null;
   is_shareable: boolean;
 }
 
@@ -78,6 +93,11 @@ export interface IPackageFormValues {
   session_type_restriction: string;
   place_restriction: string;
   class_ids_restriction: string[];
+  has_instructor_restriction: boolean;
+  instructor_ids_restriction: string[];
+  has_time_restriction: boolean;
+  eligible_start_time: string;
+  eligible_end_time: string;
   package_type: string;
   is_active: boolean;
   is_visible: boolean;

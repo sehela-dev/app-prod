@@ -1,18 +1,25 @@
 "use client";
 
 import { getOrderApiError } from "@/api-req/customer-app";
+import { PaymentChannelList } from "@/components/general/payment-channel-list";
 import { StickyContainerComponent } from "@/components/layout";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { useCart } from "@/context/cart.ctx";
+import { useValidateVoucher } from "@/hooks/api/mutations/customers";
 import { useCreateProductOrder, useGetAddresses } from "@/hooks/api/queries/customer/orders";
+import { useGetPaymentChannels } from "@/hooks/api/queries/customer/payments";
+import { ENABLE_MEMBER_VOUCHER_LIFECYCLE, ENABLE_NATIVE_PAYMENT } from "@/lib/config";
 import { formatCurrency } from "@/lib/helper";
+import { getVoucherErrorMessage, isVoucherErrorCode, VOUCHER_HELD_NOTE, VOUCHER_PREVIEW_NOTE } from "@/lib/voucher";
 import { cn } from "@/lib/utils";
-import { ChevronRight, Loader2, MapPin, ShoppingBag } from "lucide-react";
+import type { IValidateVoucherResponse } from "@/types/customer-app/booking.interface";
+import { ChevronRight, Loader2, MapPin, ShoppingBag, TicketPercent, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const ERROR_COPY: Record<string, string> = {
@@ -25,6 +32,12 @@ const ERROR_COPY: Record<string, string> = {
   ORDER_CONFIRM_FAILED: "Your order could not be confirmed. Please try again.",
   MIDTRANS_ERROR: "Failed to create payment. Please try again.",
   MIDTRANS_CONNECTION_ERROR: "Failed to create payment. Please try again.",
+  CHANNEL_DISABLED: "This payment method is unavailable. Please pick another one.",
+  CHANNEL_UNAVAILABLE: "This payment method is unavailable. Please pick another one.",
+  PAYMENT_INSTRUCTIONS_UNAVAILABLE: "We couldn't prepare this payment. Please try again.",
+  VOUCHER_INVALID: "This discount code is not valid.",
+  VOUCHER_CATEGORY_MISMATCH: "This discount code is not valid for product orders.",
+  MIN_PURCHASE_NOT_MET: "Your order does not meet the minimum for this discount code.",
   CONFIGURATION_ERROR: "Something went wrong on our side. Please contact support.",
 };
 
@@ -37,6 +50,18 @@ export const CartCheckoutView = () => {
   const [deliveryMethod, setDeliveryMethod] = useState<"pickup" | "third_party">("pickup");
   const [addressId, setAddressId] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
+  const [voucherInput, setVoucherInput] = useState("");
+  const [appliedVoucher, setAppliedVoucher] = useState<IValidateVoucherResponse | null>(null);
+  const [voucherError, setVoucherError] = useState<string | null>(null);
+  const checkoutSucceeded = useRef(false);
+  const { mutateAsync: validateVoucherAsync, isPending: voucherValidating } = useValidateVoucher();
+  const { data: channelsData, isLoading: channelsLoading } = useGetPaymentChannels(ENABLE_NATIVE_PAYMENT);
+  const channels = channelsData?.data ?? [];
+  const discount = appliedVoucher?.calculated_discount ?? 0;
+  const total = appliedVoucher?.discounted_total_idr ?? subtotal;
+  const requiresChannel = ENABLE_NATIVE_PAYMENT && channels.length > 0 && total > 0;
+  const selectedChannelLabel = channels.find((channel) => channel.code === selectedChannel)?.label;
 
   useEffect(() => {
     if (addressId || addresses.length === 0) return;
@@ -44,16 +69,56 @@ export const CartCheckoutView = () => {
   }, [addresses, addressId]);
 
   useEffect(() => {
-    if (!isCartReady || items.length > 0) return;
+    if (!isCartReady || items.length > 0 || checkoutSucceeded.current) return;
     router.replace("/cart");
   }, [isCartReady, items.length, router]);
 
   const selectedAddress = addresses.find((a) => a.id === addressId) ?? null;
 
+  const handleApplyVoucher = async () => {
+    const code = voucherInput.trim().toUpperCase();
+    if (!code) return;
+    setVoucherError(null);
+    try {
+      const raw = await validateVoucherAsync({
+        voucher_code: code,
+        cart_total_idr: subtotal,
+        transaction_type: "order",
+      });
+      const voucher = (raw as unknown as { data?: IValidateVoucherResponse }).data ?? (raw as unknown as IValidateVoucherResponse);
+      if (voucher?.is_valid) {
+        setAppliedVoucher(voucher);
+        setVoucherInput(voucher.voucher_code ?? code);
+      } else {
+        setAppliedVoucher(null);
+        setVoucherError(getVoucherErrorMessage(voucher?.error_code, voucher?.error_message) || "Kode diskon tidak valid.");
+      }
+    } catch (err: unknown) {
+      const code = (err as { response?: { data?: { error?: { code?: string } } } })?.response?.data?.error?.code;
+      const message =
+        getVoucherErrorMessage(code) ||
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ||
+        (err as Error)?.message ||
+        "Gagal mengecek kode diskon";
+      setAppliedVoucher(null);
+      setVoucherError(message);
+    }
+  };
+
+  const removeVoucher = () => {
+    setAppliedVoucher(null);
+    setVoucherInput("");
+    setVoucherError(null);
+  };
+
   const handleCheckout = async () => {
     if (!locationId || items.length === 0 || hasMixedLocations) return;
     if (deliveryMethod === "third_party" && !addressId) {
       toast.error("Please choose a delivery address.");
+      return;
+    }
+    if (requiresChannel && !selectedChannel) {
+      toast.error("Please choose a payment method.");
       return;
     }
 
@@ -64,17 +129,30 @@ export const CartCheckoutView = () => {
         ...(deliveryMethod === "third_party" && addressId ? { address_id: addressId } : null),
         items: items.map((item) => ({ variant_id: item.variant_id, quantity: item.quantity })),
         ...(notes.trim() ? { notes: notes.trim() } : null),
+        ...(requiresChannel && selectedChannel ? { payment_channel: selectedChannel } : {}),
+        ...(appliedVoucher?.voucher_code ? { voucher_code: appliedVoucher.voucher_code } : {}),
       });
+      // Clear the cart only after a successful create; suppress the empty-cart
+      // redirect so it cannot race the payment/detail navigation below.
+      checkoutSucceeded.current = true;
       clearCart();
-      if (res?.snap_redirect_url) {
-        window.location.href = res.snap_redirect_url;
+      // Always land on the in-app payment page (same pattern as booking). That
+      // page opens Snap in a new tab or renders native VA/QRIS instructions.
+      if (res?.payment_status === "paid") {
+        router.replace(`/profile/orders/${res.order_id}`);
         return;
       }
-      router.replace(`/profile/orders/${res.order_id}`);
+      router.replace(`/profile/orders/${res.order_id}/payment`);
     } catch (error) {
       const { code, message, details } = getOrderApiError(error);
       const fieldMessage = details ? Object.values(details)[0]?.[0] : undefined;
-      toast.error(fieldMessage || message || ERROR_COPY[code ?? ""] || "Failed to create order. Please try again.");
+      const voucherMessage = getVoucherErrorMessage(code);
+      if (isVoucherErrorCode(code)) {
+        // The server recomputed the cart; drop the stale preview so the total resets.
+        setAppliedVoucher(null);
+        setVoucherError(voucherMessage || message || null);
+      }
+      toast.error(fieldMessage || voucherMessage || message || ERROR_COPY[code ?? ""] || "Failed to create order. Please try again.");
     }
   };
 
@@ -87,6 +165,13 @@ export const CartCheckoutView = () => {
   }
 
   if (items.length === 0) {
+    if (checkoutSucceeded.current) {
+      return (
+        <div className="flex items-center justify-center gap-2 py-16 text-sm text-brand-500">
+          <Loader2 className="h-4 w-4 animate-spin" /> Redirecting to payment…
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-center gap-2 px-4 py-16 text-center font-serif text-brand-500">
         <ShoppingBag className="h-12 w-12 text-brand-300" />
@@ -186,6 +271,70 @@ export const CartCheckoutView = () => {
           </div>
         )}
 
+        {requiresChannel && (
+          <div className="flex flex-col gap-2">
+            <p className="text-base font-bold">Payment method</p>
+            <PaymentChannelList
+              channels={channels}
+              selected={selectedChannel}
+              onSelect={(code) => setSelectedChannel(code)}
+            />
+            {selectedChannelLabel && <p className="text-xs text-brand-400">Selected: {selectedChannelLabel}</p>}
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2">
+          <p className="text-base font-bold">Kode diskon</p>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Input
+                className="min-h-11 rounded-xl border-brand-100 bg-white pl-9 pr-3"
+                placeholder="Masukkan kode"
+                value={voucherInput}
+                onChange={(event) => {
+                  setVoucherInput(event.target.value);
+                  if (voucherError) setVoucherError(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void handleApplyVoucher();
+                  }
+                }}
+                disabled={!!appliedVoucher || voucherValidating}
+              />
+              <TicketPercent size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-500/40" />
+            </div>
+            {appliedVoucher ? (
+              <Button type="button" variant="outline" className="min-h-11 rounded-xl" onClick={removeVoucher}>
+                <X size={14} /> Remove
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                className="min-h-11 rounded-xl bg-brand-500 px-4 text-white"
+                onClick={handleApplyVoucher}
+                disabled={!voucherInput.trim() || voucherValidating}
+              >
+                {voucherValidating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply"}
+              </Button>
+            )}
+          </div>
+          {appliedVoucher ? (
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-medium text-emerald-700">
+                {appliedVoucher.voucher_code} applied — {formatCurrency(discount)} off
+              </p>
+              {ENABLE_MEMBER_VOUCHER_LIFECYCLE && <p className="text-[11px] text-brand-400">{VOUCHER_PREVIEW_NOTE}</p>}
+              {ENABLE_MEMBER_VOUCHER_LIFECYCLE && <p className="text-[11px] text-brand-400">{VOUCHER_HELD_NOTE}</p>}
+            </div>
+          ) : voucherError ? (
+            <p role="alert" className="text-xs font-medium text-red-600">
+              {voucherError}
+            </p>
+          ) : null}
+        </div>
+
         <div className="flex flex-col gap-2">
           <p className="text-base font-bold">Notes (optional)</p>
           <Textarea
@@ -197,9 +346,21 @@ export const CartCheckoutView = () => {
           />
         </div>
 
-        <div className="flex items-center justify-between rounded-md bg-brand-500 p-4 font-semibold text-white">
-          <p>Total</p>
-          <p>{formatCurrency(subtotal)}</p>
+        <div className="flex flex-col gap-1.5 rounded-md bg-brand-500 p-4 font-semibold text-white">
+          <div className="flex items-center justify-between text-sm">
+            <p>Subtotal</p>
+            <p>{formatCurrency(subtotal)}</p>
+          </div>
+          {discount > 0 && (
+            <div className="flex items-center justify-between text-sm">
+              <p>Discount</p>
+              <p>- {formatCurrency(discount)}</p>
+            </div>
+          )}
+          <div className="flex items-center justify-between border-t border-white/20 pt-2">
+            <p>Total</p>
+            <p className="text-lg font-bold">{total === 0 && discount > 0 ? "Gratis" : formatCurrency(total)}</p>
+          </div>
         </div>
         {deliveryMethod === "third_party" && selectedAddress && (
           <p className="text-xs text-brand-400">Deliver to {selectedAddress.recipient_name} · {selectedAddress.phone}</p>
@@ -216,10 +377,16 @@ export const CartCheckoutView = () => {
           <div className="flex w-full">
             <Button
               className="w-full"
-              disabled={isPending || hasMixedLocations || (deliveryMethod === "third_party" && !addressId)}
+              disabled={
+                isPending ||
+                hasMixedLocations ||
+                (ENABLE_NATIVE_PAYMENT && channelsLoading && total > 0) ||
+                (deliveryMethod === "third_party" && !addressId) ||
+                (requiresChannel && !selectedChannel)
+              }
               onClick={handleCheckout}
             >
-              {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Place Order"}
+              {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Proceed to Pay"}
             </Button>
           </div>
         </div>

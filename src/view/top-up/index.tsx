@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuthMember } from "@/context/member.ctx";
 import { useGetPublicCreditPackagesInfinite, useGetPublicClasses } from "@/hooks/api/queries/customer/public";
 import { useGetMyCredits } from "@/hooks/api/queries/customer/profile";
+import { formatPackageEligibility } from "@/lib/credit-package";
 import { formatCurrency, formatDateHelper } from "@/lib/helper";
 import type { ICreditPackageItem } from "@/types/credit-package.interface";
 import { ChevronDown, Loader2, SlidersHorizontal, Users } from "lucide-react";
@@ -294,6 +295,7 @@ const PackageRow = ({
   const facts: string[] = [];
   facts.push(`${item.validity_days} days from your first class`);
   facts.push(`${classNames || "All classes"} · ${placeLabel(item.place_restriction)}`);
+  facts.push(formatPackageEligibility(item));
 
   return (
     <button

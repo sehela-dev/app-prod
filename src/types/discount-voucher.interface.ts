@@ -3,6 +3,7 @@ import { ICommonParams } from "./general.interface";
 
 export type TDiscountType = "percentage" | "fixed";
 export type TCategoryVoucher = "booking" | "package_purchase" | "order" | "universal";
+export type TVoucherSessionType = "regular" | "private" | "special";
 
 export interface IVouchersListItem {
   id: string;
@@ -11,6 +12,7 @@ export interface IVouchersListItem {
   description: string;
   categories: string[];
   category?: string;
+  session_types?: TVoucherSessionType[] | null;
   discount_type: TDiscountType;
   discount_value: number;
   min_purchase_idr: number;
@@ -41,6 +43,7 @@ export interface ICreateVoucherPaylaod {
   valid_until: string;
   valid_time_from: string;
   valid_time_until: string;
+  session_types?: TVoucherSessionType[] | null;
 }
 
 export interface IApplyDiscountPaylaod {

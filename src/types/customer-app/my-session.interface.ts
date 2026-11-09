@@ -1,5 +1,6 @@
 import { IResponseData } from "@/lib/config";
 import { ICommonParams } from "../general.interface";
+import type { PaymentInstructions } from "./payment.interface";
 
 export interface IMySessionItem {
   id: string;
@@ -24,6 +25,11 @@ export interface ISessionPayment {
   provider: string;
   snap_token: string | null;
   snap_redirect_url: string | null;
+  payment_instructions?: PaymentInstructions | null;
+  channel?: string | null;
+  channel_label?: string | null;
+  /** Set on the newest row when it replaced an earlier payment. */
+  supersedes?: string | null;
 }
 
 export interface IClassSession {
@@ -65,9 +71,11 @@ export interface IMySessionDetail {
   room_id: string;
   payment_method: string;
   price_idr: number;
+  original_amount_idr?: number | null;
   voucher_code: string;
   voucher_discount_idr: number;
   total_paid_idr: number;
+  amount_paid_idr?: number | null;
   credits_used: number;
   cancel_reason: string;
   canceled_at: string;

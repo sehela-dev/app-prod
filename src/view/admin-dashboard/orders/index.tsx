@@ -5,6 +5,7 @@ import { buildNumber, CustomTable } from "@/components/general/custom-table";
 import { CustomPagination } from "@/components/general/pagination-component";
 import { GeneralTabComponent } from "@/components/general/tabs-component";
 import { TransactionVoidDialog } from "@/components/page/orders";
+import { PendingPaymentsTab } from "./pending-payments";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
@@ -18,7 +19,7 @@ import { useAdminPermission } from "@/hooks/use-role-access";
 import { defaultDate, formatCurrency, formatDateHelper, isTransactionVoidable } from "@/lib/helper";
 import { IOrderItem } from "@/types/orders.interface";
 import { SEHELA_BRANCH } from "@/constants/sample-data";
-import { Ban, CirclePlus, File, ListFilter, ReceiptText } from "lucide-react";
+import { Ban, CirclePlus, ReceiptText } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -50,10 +51,11 @@ export const OrdersPageView = () => {
     endDate: selectedRange.to,
     status: statusTab === "all" ? undefined : statusTab,
     branch: branch !== "all" ? branch : undefined,
-  });
+  }, statusTab !== "pending");
 
   const statusTabOptions = [
     { value: "all", name: "All" },
+    { value: "pending", name: "Pending" },
     { value: "voided", name: "Voided" },
     { value: "refunded", name: "Refunded" },
   ];
@@ -179,6 +181,9 @@ export const OrdersPageView = () => {
           </div>
         </div>
       </div>
+      {statusTab === "pending" ? (
+        <PendingPaymentsTab />
+      ) : (
       <Card className="rounded-lg border-brand-100">
         <CardHeader className="flex flex-row w-full justify-between items-center">
           <div className="flex flex-col">
@@ -240,6 +245,7 @@ export const OrdersPageView = () => {
           />
         </CardFooter>
       </Card>
+      )}
       {openPreview && (
         <TransactionVoidDialog
           isOpen={openPreview}

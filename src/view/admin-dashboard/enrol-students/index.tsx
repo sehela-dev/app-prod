@@ -22,6 +22,7 @@ import { useAdminPermission } from "@/hooks/use-role-access";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useQueryClient } from "@tanstack/react-query";
 
 const enrollmentType = [
   {
@@ -35,6 +36,7 @@ const enrollmentType = [
 ];
 export const EnrollStudentView = () => {
   const { isManager } = useAdminPermission();
+  const queryClient = useQueryClient();
   const { customerData, sessionData, onSelectSession: selectSession, addCustomer } = useAdminManualTransaction();
   const targetDivRef = useRef<HTMLDivElement | null>(null);
 
@@ -141,6 +143,11 @@ export const EnrollStudentView = () => {
       // Price may have changed since the list loaded — refresh so UI shows the new price.
       const code = (error as { response?: { data?: { error?: { code?: string } } } })?.response?.data?.error?.code;
       if (code === "CREDIT_AMOUNT_MISMATCH") refetch();
+      if (code === "CREDIT_PACKAGE_NOT_ELIGIBLE") {
+        // New instructor/time/type/place/class rules are enforced server-side.
+        void queryClient.invalidateQueries({ queryKey: ["dashboard", "customers", "member", "customer-wallet"] });
+        if (customerData) addCustomer({ ...customerData, package: undefined });
+      }
     }
   };
 

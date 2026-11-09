@@ -7,6 +7,7 @@ import { useMutation } from "@tanstack/react-query";
 
 import { initiatePackagePurchase } from "@/api-req/customer-app";
 import { getPurchaseErrorMessage, getShareErrorMessage } from "@/api-req/customer-app/payments";
+import { getVoucherErrorMessage } from "@/lib/voucher";
 
 // A3: POST /payments/initiate — on success redirect member to snap_redirect_url.
 export const useInitiatePackagePurchase = () => {
@@ -28,7 +29,9 @@ const useConfig = () => {
       );
       return toast.error(responseError?.code ?? "ERROR", {
         id: "error",
-        description: getPurchaseErrorMessage(responseError?.code, fallback),
+        description:
+          getVoucherErrorMessage(responseError?.code) ||
+          getPurchaseErrorMessage(responseError?.code, fallback),
         position: "top-center",
       });
     }

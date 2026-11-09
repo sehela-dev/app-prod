@@ -2,6 +2,7 @@
 
 import { BaseDialogConfirmation } from "@/components/general/dialog-confirnation";
 import { PasswordInput } from "@/components/general/password-input";
+import { PaymentMethodsCard } from "./payment-methods-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -133,6 +134,8 @@ export const AdminSettingsPage = () => {
           </FormProvider>
         </CardContent>
       </Card>
+
+      <PaymentMethodsCard />
 
       <BaseDialogConfirmation
         open={openReloginDialog}

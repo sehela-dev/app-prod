@@ -1,21 +1,29 @@
 "use client";
 
 import { BaseDialogComponent } from "@/components/general/base-dialog-component";
+import { LatestPaymentBanner } from "@/components/general/latest-payment-banner";
+import { PaymentChannelList } from "@/components/general/payment-channel-list";
 import { StickyContainerComponent } from "@/components/layout";
 import { NavHeaderComponent } from "@/components/layout/header-checkout";
 import { Button } from "@/components/ui/button";
 import { useCancelBooking, useRepayBooking } from "@/hooks/api/mutations/customers";
+import { useGetPaymentChannels, useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
 import { useGetMySessionDetail } from "@/hooks/api/queries/customer/profile";
+import { useRemainingTime } from "@/hooks/use-remaining-time";
 import type { ICancelBookingData } from "@/types/customer-app/booking.interface";
 import type { AxiosError } from "axios";
+import { ENABLE_NATIVE_PAYMENT, ENABLE_PAYMENT_CHANGE } from "@/lib/config";
 import { formatCurrency, formatDateHelper, normalizeOrderId } from "@/lib/helper";
+import { isPaymentFailure, isPaymentRetryable, isPaymentSuccess, isPaymentTerminal } from "@/lib/payment-status";
+import { loadSnap } from "@/lib/snap";
+import { NativeInstructionsComponent } from "@/view/payment/native-instructions";
 import { Clock, CreditCard, Loader2, MapPin, RefreshCw } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "react-qr-code";
 import { toast } from "sonner";
 
-const FAILED_PAYMENT_STATUSES = ["cancel", "cancelled", "canceled", "expire", "expired", "deny", "failure"];
+const PAYMENT_TIMEOUT_MS = 15 * 60 * 1000; // matches the BE booking/Midtrans cap
 
 export const MySessionDetail = () => {
   const params = useParams();
@@ -26,16 +34,31 @@ export const MySessionDetail = () => {
   const [openCancel, setOpenCancel] = useState(false);
   const [cancelStep, setCancelStep] = useState<"confirm" | "choice">("confirm");
   const [choiceInfo, setChoiceInfo] = useState<{ penalty: number; message: string | null } | null>(null);
+  const [changeOpen, setChangeOpen] = useState(false);
+  const [changeConfirm, setChangeConfirm] = useState(false);
+  const [changeChannel, setChangeChannel] = useState<string | null>(null);
   const prevPendingRef = useRef<boolean | null>(null);
+  const snapBusyRef = useRef(false);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   const bookingData = data?.data;
   const paymentStatus = bookingData?.payment?.status;
   const normalizedBookingStatus = bookingData?.booking_status?.toLowerCase() ?? "";
-  const isExpired = normalizedBookingStatus === "expired" || paymentStatus === "expire" || paymentStatus === "expired";
-  const isPaymentFailed = !!paymentStatus && FAILED_PAYMENT_STATUSES.includes(paymentStatus);
+  const isBookingExpired = normalizedBookingStatus === "expired" || normalizedBookingStatus === "canceled" || normalizedBookingStatus === "cancelled";
+  const isPaymentFailed = isPaymentFailure(paymentStatus);
+  const isPaymentRetryableStatus = isPaymentRetryable(paymentStatus);
+  const isPaymentSettled = isPaymentSuccess(paymentStatus);
   const isPendingPayment =
     !isPaymentFailed &&
-    !isExpired &&
+    !isPaymentSettled &&
+    !isBookingExpired &&
     (bookingData?.booking_status === "pending_payment" || paymentStatus === "pending" || paymentStatus === "initiated");
   // Unpaid: no money collected yet, so cancel voids the pending payment and returns no credit.
   const isUnpaidBooking =
@@ -46,8 +69,40 @@ export const MySessionDetail = () => {
     (normalizedBookingStatus === "confirmed" || normalizedBookingStatus === "pending_payment") &&
     Number.isFinite(startMs) &&
     startMs > Date.now();
-  const snapRedirectUrl = bookingData?.payment?.snap_redirect_url;
+
+  // Native rows have no snap token; legacy rows have a token but no instructions.
+  const payment = bookingData?.payment;
+  const pi = payment?.payment_instructions ?? null;
+  const isRedirect = pi?.type === "redirect" || (!pi && Boolean(payment?.snap_token || payment?.snap_redirect_url));
+  const nativeInstructions = pi && pi.type !== "redirect" ? pi : null;
+  const createdMs = bookingData?.created_at ? Date.parse(bookingData.created_at) : NaN;
+  const expiresAt = pi?.expires_at ?? (Number.isFinite(createdMs) ? new Date(createdMs + PAYMENT_TIMEOUT_MS).toISOString() : null);
+  const remainingMs = useRemainingTime(expiresAt);
+  const windowExpired = remainingMs === 0;
+  const canContinue =
+    isPendingPayment &&
+    !windowExpired &&
+    (isRedirect ? Boolean(payment?.snap_token || payment?.snap_redirect_url) : Boolean(pi));
+
+  const snapRedirectUrl = payment?.snap_redirect_url;
+  const paymentOrderId = payment?.order_id ?? null;
   const repayMutation = useRepayBooking();
+  const canChangeMethod =
+    ENABLE_NATIVE_PAYMENT && ENABLE_PAYMENT_CHANGE && normalizedBookingStatus === "pending_payment" && !isBookingExpired && !windowExpired;
+  const { data: channelsData } = useGetPaymentChannels(ENABLE_NATIVE_PAYMENT && ENABLE_PAYMENT_CHANGE && changeOpen);
+  const channels = useMemo(() => channelsData?.data ?? [], [channelsData]);
+
+  // Poll every pending row, native or Snap; the hook stops on terminal.
+  const { data: statusResp } = useGetPaymentStatus(isPendingPayment && !windowExpired ? paymentOrderId : null);
+  const liveStatus = statusResp?.data?.transaction_status ?? null;
+
+  useEffect(() => {
+    if (isPendingPayment && windowExpired) void refetch(); // triggers backend lazy expire
+  }, [isPendingPayment, windowExpired, refetch]);
+
+  useEffect(() => {
+    if (isPaymentTerminal(liveStatus)) void refetch();
+  }, [liveStatus, refetch]);
 
   // Show toast when payment transitions from pending -> paid
   useEffect(() => {
@@ -62,22 +117,140 @@ export const MySessionDetail = () => {
     prevPendingRef.current = isPendingPayment;
   }, [isPendingPayment, isPaymentFailed, bookingData?.booking_status]);
 
+  const openSnapToken = async (token?: string | null, fallbackUrl?: string | null) => {
+    if (snapBusyRef.current) return;
+    snapBusyRef.current = true;
+    const release = () => {
+      snapBusyRef.current = false;
+    };
+    try {
+      if (!token) throw new Error("No Snap token");
+      await loadSnap();
+      if (!aliveRef.current) return;
+      if (!window.snap) throw new Error("Snap is not available");
+      window.snap.pay(token, {
+        onSuccess: () => {
+          release();
+          void refetch();
+        },
+        onPending: () => {
+          release();
+          void refetch();
+        },
+        onError: () => {
+          release();
+          void refetch();
+        },
+        // Closing is not a failure; the token is still valid until it expires.
+        onClose: () => {
+          release();
+          void refetch();
+        },
+      });
+    } catch {
+      release();
+      if (!aliveRef.current) return;
+      if (fallbackUrl) {
+        window.location.href = fallbackUrl;
+      } else {
+        toast.error("Payment page unavailable", { description: "Please try again.", position: "top-center" });
+      }
+    }
+  };
+
   const handlePayNow = () => {
-    if (snapRedirectUrl) {
-      window.location.href = snapRedirectUrl;
+    if (!isRedirect) return; // native rows render their instructions, never Snap
+    void openSnapToken(payment?.snap_token, snapRedirectUrl);
+  };
+
+  const handlePaymentSessionError = (error: unknown) => {
+    const code = (error as AxiosError<{ error?: { code?: string } }>)?.response?.data?.error?.code;
+    if (code === "BOOKING_EXPIRED") {
+      void router.push("/book");
+      return;
+    }
+    // Refresh so Continue can reuse a live token or the page shows the settled row.
+    if (code === "PAYMENT_STILL_ACTIVE" || code === "PAYMENT_ALREADY_SETTLED" || code === "PAYMENT_NOT_PENDING") {
+      void refetch();
     }
   };
 
   const handleRetryPayment = () => {
     if (!bookingData?.booking_id) return;
-    repayMutation.mutate(bookingData.booking_id, {
-      onSuccess: (res) => {
-        const url = res?.data?.snap_redirect_url;
-        if (url) {
-          window.location.href = url;
-        }
+    repayMutation.mutate(
+      { bookingId: bookingData.booking_id, intent: "retry" },
+      {
+        onSuccess: (res) => {
+          // Refresh so the page sees the new row; native rows render from the detail.
+          void refetch();
+          const next = res?.data?.payment_instructions;
+          if (next?.type === "redirect" || (!next && res?.data?.snap_token)) {
+            void openSnapToken(res?.data?.snap_token, res?.data?.snap_redirect_url);
+          }
+        },
+        onError: handlePaymentSessionError,
       },
-    });
+    );
+  };
+
+  const openChangeDialog = () => {
+    setChangeChannel(null);
+    setChangeConfirm(false);
+    setChangeOpen(true);
+  };
+
+  const closeChangeDialog = () => {
+    setChangeOpen(false);
+    setChangeConfirm(false);
+    setChangeChannel(null);
+  };
+
+  const handleChangePayment = () => {
+    if (!bookingData?.booking_id || !changeChannel) return;
+    repayMutation.mutate(
+      { bookingId: bookingData.booking_id, intent: "change", payment_channel: changeChannel },
+      {
+        onSuccess: (res) => {
+          closeChangeDialog();
+          void refetch();
+          const next = res?.data?.payment_instructions;
+          if (next?.type === "redirect" || (!next && res?.data?.snap_token)) {
+            void openSnapToken(res?.data?.snap_token, res?.data?.snap_redirect_url);
+          }
+        },
+        onError: (error) => {
+          handlePaymentSessionError(error);
+          const code = (error as AxiosError<{ error?: { code?: string } }>)?.response?.data?.error?.code;
+          if (
+            code === "PAYMENT_STILL_ACTIVE" ||
+            code === "PAYMENT_ALREADY_SETTLED" ||
+            code === "PAYMENT_NOT_PENDING" ||
+            code === "BOOKING_EXPIRED"
+          ) {
+            closeChangeDialog();
+          }
+          if (code === "CHANNEL_DISABLED" || code === "CHANNEL_UNAVAILABLE") {
+            setChangeConfirm(false);
+            setChangeChannel(null);
+          }
+        },
+      },
+    );
+  };
+
+  const handleChangeConfirm = () => {
+    if (!changeConfirm) {
+      // Same channel behaves like continue/retry: no new row.
+      if (changeChannel && changeChannel === bookingData?.payment?.channel) {
+        closeChangeDialog();
+        // Pending rows keep their live payment; native instructions are already on screen.
+        if (isPendingPayment && isRedirect && canContinue) handlePayNow();
+        return;
+      }
+      setChangeConfirm(true);
+      return;
+    }
+    handleChangePayment();
   };
 
   const cancelMutation = useCancelBooking();
@@ -239,7 +412,7 @@ export const MySessionDetail = () => {
             <>
               <div className="flex flex-col gap-4 px-4">
                 {/* Pending Payment Banner */}
-                {isExpired ? (
+                {isBookingExpired ? (
                   <div className="mt-4 flex items-start gap-3 rounded-xl border border-zinc-300 bg-zinc-50 p-4">
                     <Clock className="h-5 w-5 shrink-0 text-zinc-600 mt-0.5" />
                     <div className="flex flex-col gap-1 flex-1">
@@ -274,6 +447,8 @@ export const MySessionDetail = () => {
                   </div>
                 ) : null}
 
+                {bookingData?.payment?.supersedes && <LatestPaymentBanner orderId={paymentOrderId} />}
+
                 <div className="flex flex-col gap-4 w-full">
                   <div className="bg-[#FFFFFFCC] border border-[#91C1CA] mx-auto w-full rounded-[12px]">
                     <div className="flex flex-col gap-4 p-4">
@@ -286,6 +461,12 @@ export const MySessionDetail = () => {
                           <p className="text-xs">#Order ID</p>
                           <p className="text-sm font-semibold">{normalizeOrderId(bookingData?.payment?.order_id ?? bookingData?.order_id) || "-"}</p>
                         </div>
+                        {(bookingData?.payment?.channel_label || bookingData?.payment?.channel) && (
+                          <div className="flex flex-col gap-1">
+                            <p className="text-xs">Payment method</p>
+                            <p className="text-sm font-semibold">{bookingData.payment?.channel_label || bookingData.payment?.channel}</p>
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-col gap-1">
                         <p className="text-xs">Session</p>
@@ -315,7 +496,7 @@ export const MySessionDetail = () => {
                           <>
                             <div className="flex flex-row items-center justify-between">
                               <p className="font-normal text-xs text-brand-500/60">Original Price</p>
-                              <p className="font-normal text-xs line-through text-brand-500/60">{formatCurrency(bookingData?.price_idr)}</p>
+                              <p className="font-normal text-xs line-through text-brand-500/60">{formatCurrency(bookingData?.original_amount_idr ?? bookingData?.price_idr)}</p>
                             </div>
                             <div className="flex flex-row items-center justify-between">
                               <p className="font-normal text-xs text-brand-500/60">Voucher {bookingData.voucher_code}</p>
@@ -325,7 +506,7 @@ export const MySessionDetail = () => {
                         ) : null}
                         <div className="flex flex-row items-center justify-between">
                           <p className="font-semibold text-sm">Purchase Amount</p>
-                          <p className="font-semibold text-sm">{formatCurrency(bookingData?.total_paid_idr)}</p>
+                          <p className="font-semibold text-sm">{formatCurrency(bookingData?.amount_paid_idr ?? bookingData?.total_paid_idr)}</p>
                         </div>
                       </div>
 
@@ -339,7 +520,16 @@ export const MySessionDetail = () => {
                     </div>
                   </div>
 
-                  {isExpired ? (
+                  {nativeInstructions && canContinue && (
+                    <NativeInstructionsComponent
+                      instructions={nativeInstructions}
+                      amountIdr={bookingData?.amount_paid_idr ?? bookingData?.total_paid_idr ?? bookingData?.original_amount_idr ?? bookingData?.price_idr ?? 0}
+                      channelLabel={payment?.channel_label}
+                      remainingMs={remainingMs}
+                    />
+                  )}
+
+                  {isBookingExpired ? (
                     <div className="mx-auto w-full flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-50 p-8 text-center">
                       <Clock className="h-10 w-10 text-zinc-500" />
                       <p className="font-semibold text-zinc-700">Booking expired</p>
@@ -348,15 +538,17 @@ export const MySessionDetail = () => {
                       </p>
                     </div>
                   ) : isPendingPayment || isPaymentFailed ? (
-                    <div className="mx-auto w-full flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-yellow-300 bg-yellow-50/50 p-8 text-center">
-                      <CreditCard className="h-10 w-10 text-yellow-600" />
-                      <p className="font-semibold text-brand-500">QR code available after payment</p>
-                      <p className="text-xs text-brand-500/60 max-w-[240px]">
-                        {isPaymentFailed
-                          ? "Tap \u201cRetry Payment\u201d below to start a new payment session via Midtrans (QRIS, e-wallet, bank transfer)."
-                          : "Tap \u201cPay Now\u201d below to complete your payment via Midtrans (QRIS, e-wallet, bank transfer)."}
-                      </p>
-                    </div>
+                    nativeInstructions && canContinue ? null : (
+                      <div className="mx-auto w-full flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-yellow-300 bg-yellow-50/50 p-8 text-center">
+                        <CreditCard className="h-10 w-10 text-yellow-600" />
+                        <p className="font-semibold text-brand-500">QR code available after payment</p>
+                        <p className="text-xs text-brand-500/60 max-w-[240px]">
+                          {isPaymentFailed
+                            ? "Tap \u201cRetry Payment\u201d below to start a new payment session via Midtrans (QRIS, e-wallet, bank transfer)."
+                            : "Tap \u201cPay Now\u201d below to complete your payment via Midtrans (QRIS, e-wallet, bank transfer)."}
+                        </p>
+                      </div>
+                    )
                   ) : (
                     <div className="mx-auto w-full flex">
                       <div
@@ -392,11 +584,11 @@ export const MySessionDetail = () => {
 
         <StickyContainerComponent>
           <div className="flex my-2 px-4">
-            {isExpired ? (
+            {isBookingExpired ? (
               <Button className="w-full min-h-[48px]" variant="outline" onClick={() => router.push("/book")}>
                 Browse Classes
               </Button>
-            ) : isPaymentFailed ? (
+            ) : isPaymentRetryableStatus || (isPendingPayment && !canContinue) ? (
               <div className="flex w-full flex-col gap-2">
                 <Button
                   className="w-full min-h-[48px]"
@@ -410,19 +602,42 @@ export const MySessionDetail = () => {
                   )}
                   Retry Payment
                 </Button>
+                {canChangeMethod && (
+                  <Button variant="outline" className="w-full min-h-[48px]" onClick={openChangeDialog}>
+                    Change payment method
+                  </Button>
+                )}
                 {cancelGhostButton}
               </div>
             ) : isPendingPayment ? (
               <div className="flex w-full flex-col gap-2">
-                <Button className="w-full min-h-[48px]" onClick={handlePayNow} disabled={!snapRedirectUrl}>
-                  <CreditCard className="h-4 w-4 mr-2" />
-                  Pay Now
-                </Button>
+                {isRedirect && (
+                  <Button className="w-full min-h-[48px]" onClick={handlePayNow}>
+                    <CreditCard className="h-4 w-4 mr-2" />
+                    Pay Now
+                  </Button>
+                )}
+                {canChangeMethod && (
+                  <Button variant="outline" className="w-full min-h-[48px]" onClick={openChangeDialog}>
+                    Change payment method
+                  </Button>
+                )}
                 {cancelGhostButton}
               </div>
             ) : canCancel ? (
-              <Button variant={"destructive"} className="w-full min-h-[48px] bg-red-200 text-red-800" onClick={openCancelDialog}>
-                Cancel Class
+              <div className="flex w-full flex-col gap-2">
+                <Button variant={"destructive"} className="w-full min-h-[48px] bg-red-200 text-red-800" onClick={openCancelDialog}>
+                  Cancel Class
+                </Button>
+                {canChangeMethod && (
+                  <Button variant="outline" className="w-full min-h-[48px]" onClick={openChangeDialog}>
+                    Change payment method
+                  </Button>
+                )}
+              </div>
+            ) : canChangeMethod ? (
+              <Button variant="outline" className="w-full min-h-[48px]" onClick={openChangeDialog}>
+                Change payment method
               </Button>
             ) : null}
           </div>
@@ -471,6 +686,38 @@ export const MySessionDetail = () => {
               </Button>
             </div>
           </div>
+        </BaseDialogComponent>
+      )}
+
+      {changeOpen && (
+        <BaseDialogComponent
+          isOpen={changeOpen}
+          title={changeConfirm ? "Change payment method?" : "Choose a payment method"}
+          btnConfirm={repayMutation.isPending ? "Working..." : changeConfirm ? "Confirm change" : "Continue"}
+          onConfirm={handleChangeConfirm}
+          onClose={closeChangeDialog}
+          onCloseText="Cancel"
+          isDisabled={!changeChannel || repayMutation.isPending}
+        >
+          {changeConfirm ? (
+            <p className="text-center font-serif text-sm leading-relaxed text-brand-500">
+              Ganti metode pembayaran? Pesanan lama akan ditutup.
+            </p>
+          ) : channels.length === 0 ? (
+            <p className="text-center font-serif text-sm text-brand-500/70">Belum ada metode pembayaran tersedia</p>
+          ) : (
+            <div className="max-h-[50vh] overflow-y-auto">
+              <PaymentChannelList
+                channels={channels}
+                selected={changeChannel}
+                defaultOpen
+                onSelect={(code) => {
+                  setChangeChannel(code);
+                  setChangeConfirm(false);
+                }}
+              />
+            </div>
+          )}
         </BaseDialogComponent>
       )}
     </>

@@ -11,7 +11,8 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useCreateDiscountVoucher } from "@/hooks/api/mutations/admin";
 import { defaultDate, formatCurrency, formatDateHelper } from "@/lib/helper";
-import { TDiscountType } from "@/types/discount-voucher.interface";
+import { SESSION_TYPE_OPTIONS } from "@/lib/voucher";
+import { TDiscountType, TVoucherSessionType } from "@/types/discount-voucher.interface";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
@@ -45,6 +46,7 @@ const defaultValues = {
   valid_time_from: "00:00",
   valid_time_until: "23:59",
   valid_until: defaultDate().formattedOneMonthLater,
+  session_types: [] as TVoucherSessionType[],
 };
 
 export const CreateDiscountVoucherPage = () => {
@@ -57,6 +59,9 @@ export const CreateDiscountVoucherPage = () => {
   });
 
   const isFixed = methods.watch("discount_type") === "fixed";
+  const category = methods.watch("category") as string[] | undefined;
+  const sessionTypesEnabled =
+    !!category?.some((value) => value === "booking" || value === "package_purchase") && !category?.includes("order");
 
   const { mutateAsync } = useCreateDiscountVoucher();
 
@@ -75,6 +80,7 @@ export const CreateDiscountVoucherPage = () => {
         valid_until: formatDateHelper(data?.valid_until, "yyyy-MM-dd"),
         valid_time_from: data?.valid_time_from,
         valid_time_until: data?.valid_time_until,
+        session_types: sessionTypesEnabled && data?.session_types?.length ? data.session_types : null,
         ...(data?.discount_type === "percentage" ? { max_discount_idr: parseInt(data?.max_discount_idr) as number } : null),
       };
       const res = await mutateAsync(payload);
@@ -82,7 +88,12 @@ export const CreateDiscountVoucherPage = () => {
         handleOpenModal("SUCCESS");
       }
     } catch (error) {
-      console.log(error);
+      const responseError = (error as { response?: { data?: { error?: { message?: string; details?: Record<string, string[]> } } } })
+        ?.response?.data?.error;
+      const message = responseError?.details?.session_types?.[0] ?? responseError?.message;
+      if (message && /session/i.test(message)) {
+        methods.setError("session_types", { type: "server", message });
+      }
     }
   });
 
@@ -164,6 +175,9 @@ export const CreateDiscountVoucherPage = () => {
                               checked={(field.value || []).includes(option?.value as string)}
                               onCheckedChange={(checked) => {
                                 const currentValue = field.value || [];
+                                if (checked && option.value === "order") {
+                                  methods.setValue("session_types", []);
+                                }
                                 return checked
                                   ? field.onChange([...currentValue, option.value])
                                   : field.onChange(currentValue.filter((value) => value !== option.value));
@@ -176,6 +190,43 @@ export const CreateDiscountVoucherPage = () => {
                     </div>
                     <FormMessage />
                     <FormDescription className="text-brand-500 font-medium mt-2">*) You can select multiple category</FormDescription>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={control}
+                name="session_types"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className=" text-brand-999 font-medium text-sm">Session Types</FormLabel>
+                    <div className={`grid grid-cols-3 gap-2 rounded-md border border-gray-400 p-2 ${sessionTypesEnabled ? "" : "opacity-50"}`}>
+                      {SESSION_TYPE_OPTIONS.map((option) => (
+                        <label key={option.value} className="flex items-center gap-2 text-brand-999 font-medium">
+                          <Checkbox
+                            checked={(field.value || []).includes(option.value)}
+                            disabled={!sessionTypesEnabled}
+                            onCheckedChange={(checked) => {
+                              const currentValue = field.value || [];
+                              field.onChange(
+                                checked
+                                  ? [...currentValue, option.value]
+                                  : currentValue.filter((value) => value !== option.value),
+                              );
+                            }}
+                          />
+                          {option.label}
+                        </label>
+                      ))}
+                    </div>
+                    <FormDescription className="text-brand-500 font-medium">
+                      {sessionTypesEnabled
+                        ? "Leave all unchecked to allow all session types."
+                        : category?.includes("order")
+                          ? "Session types cannot be combined with Order."
+                          : "Select Class or Credit Package to set session types."}
+                    </FormDescription>
+                    <FormMessage />
                   </FormItem>
                 )}
               />

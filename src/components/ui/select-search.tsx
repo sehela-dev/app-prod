@@ -104,7 +104,9 @@ export function SelectSearch({
         )}
       </div>
       <PopoverContent className="w-(--radix-popover-trigger-width) p-0 border-brand-50">
-        <Command className="bg-gray-50 border-brand-50">
+        {/* Options are already filtered by the caller/server. cmdk would otherwise
+            filter on the UUID value again and hide valid results. */}
+        <Command shouldFilter={false} className="bg-gray-50 border-brand-50">
           <CommandInput placeholder={searchPlaceholder} value={internalSearch} onValueChange={setInternalSearch} />
           <CommandList>
             {loading ? (

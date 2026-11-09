@@ -1,11 +1,11 @@
 import { TFulfillmentStatus } from "@/types/customer-app/order.interface";
 
 export const FULFILLMENT_LABEL: Record<TFulfillmentStatus, string> = {
-  pending: "Menunggu diproses",
-  ready_for_pickup: "Siap diambil",
-  shipped: "Dikirim",
-  completed: "Selesai",
-  canceled: "Dibatalkan",
+  pending: "Pending",
+  ready_for_pickup: "Ready for pickup",
+  shipped: "Shipped",
+  completed: "Completed",
+  canceled: "Canceled",
 };
 
 export const FULFILLMENT_STYLE: Record<TFulfillmentStatus, string> = {
