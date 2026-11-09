@@ -9,30 +9,28 @@ export const AUTH_KEY = ENV === "dev" ? process.env.DEV_SECRET_AUTH_KEY : (proce
 // back to the snap_redirect_url flow. Never put the server key here.
 export const MIDTRANS_CLIENT_KEY = process.env.MIDTRANS_CLIENT_KEY as string | undefined;
 
-// FE-12 change-method UI. Dev defaults on; prod stays off until the explicit
-// env flag is set after D-16.
+// FE-12 change-method UI. On by default; set ENABLE_PAYMENT_CHANGE=false to disable.
 const PAYMENT_CHANGE_FLAG = process.env.ENABLE_PAYMENT_CHANGE;
-export const ENABLE_PAYMENT_CHANGE = PAYMENT_CHANGE_FLAG ? PAYMENT_CHANGE_FLAG === "true" : ENV === "dev";
+export const ENABLE_PAYMENT_CHANGE = PAYMENT_CHANGE_FLAG ? PAYMENT_CHANGE_FLAG === "true" : true;
 
-// FE-19 native payment page + channel selection. Off means no `payment_channel`
-// is sent, so BE keeps minting Snap tokens for every channel. Dev defaults on;
-// prod stays off until the explicit env flag is set after D-16/D-18.
+// FE-19 native payment page + channel selection. On by default; set
+// ENABLE_NATIVE_PAYMENT=false to fall back to the Snap-only flow.
 const NATIVE_PAYMENT_FLAG = process.env.ENABLE_NATIVE_PAYMENT;
-export const ENABLE_NATIVE_PAYMENT = NATIVE_PAYMENT_FLAG ? NATIVE_PAYMENT_FLAG === "true" : ENV === "dev";
+export const ENABLE_NATIVE_PAYMENT = NATIVE_PAYMENT_FLAG ? NATIVE_PAYMENT_FLAG === "true" : true;
 
-// Member voucher package top-up: dev defaults on now that BE-07 is live;
-// prod stays off until the explicit env flag is set.
+// Member voucher package top-up. On by default; set
+// ENABLE_MEMBER_VOUCHER_PACKAGE=false to disable.
 const MEMBER_VOUCHER_PACKAGE_FLAG = process.env.ENABLE_MEMBER_VOUCHER_PACKAGE;
 export const ENABLE_MEMBER_VOUCHER_PACKAGE = MEMBER_VOUCHER_PACKAGE_FLAG
   ? MEMBER_VOUCHER_PACKAGE_FLAG === "true"
-  : ENV === "dev";
+  : true;
 
-// Held/released copy: dev defaults on now that the BE reservation lifecycle is live;
-// prod stays off until the explicit env flag is set.
+// Held/released copy. On by default; set
+// ENABLE_MEMBER_VOUCHER_LIFECYCLE=false to disable.
 const MEMBER_VOUCHER_LIFECYCLE_FLAG = process.env.ENABLE_MEMBER_VOUCHER_LIFECYCLE;
 export const ENABLE_MEMBER_VOUCHER_LIFECYCLE = MEMBER_VOUCHER_LIFECYCLE_FLAG
   ? MEMBER_VOUCHER_LIFECYCLE_FLAG === "true"
-  : ENV === "dev";
+  : true;
 
 if (!MAIN_API_URL) {
   throw new Error("MAIN_API_URL  is not defined in environment variables");
