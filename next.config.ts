@@ -1,5 +1,14 @@
 import type { NextConfig } from "next";
 
+// Accept both the current and the old documented env names so a Vercel env
+// added as NEXT_PUBLIC_MIDTRANS_CLIENT_KEY still reaches snap.js.
+const devMidtransClientKey =
+  process.env.NEXT_DEV_MIDTRANS_CLIENT_KEY ?? process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY;
+const prodMidtransClientKey =
+  process.env.NEXT_MIDTRANS_CLIENT_KEY ??
+  process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY ??
+  process.env.MIDTRANS_CLIENT_KEY;
+
 const nextConfig: NextConfig = {
   /* config options here */
   env: {
@@ -18,7 +27,7 @@ const nextConfig: NextConfig = {
 
     // Midtrans client key — public by design (used by snap.js in the browser).
     // Must match the BE's MIDTRANS_ENVIRONMENT (dev → sandbox, prod → production).
-    MIDTRANS_CLIENT_KEY: process.env.ENV === "dev" ? process.env.NEXT_DEV_MIDTRANS_CLIENT_KEY : process.env.NEXT_MIDTRANS_CLIENT_KEY,
+    MIDTRANS_CLIENT_KEY: process.env.ENV === "dev" ? devMidtransClientKey : prodMidtransClientKey,
 
     // FE-12 stays behind this flag until D-16 (sandbox) is signed off.
     ENABLE_PAYMENT_CHANGE: process.env.NEXT_PUBLIC_ENABLE_PAYMENT_CHANGE,
