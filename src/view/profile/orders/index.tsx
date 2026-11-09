@@ -76,6 +76,8 @@ export const OrderListView = () => {
             {orders.map((order) => {
               const itemCount = order.items?.reduce((n, item) => n + item.quantity, 0) ?? 0;
               const summary = order.items?.[0] ? `${order.items[0].product_name} · ${order.items[0].variant_name}` : "Order";
+              const discount = order.voucher_discount_idr ?? 0;
+              const totalPaid = Math.max(0, order.total_price_idr - discount);
               return (
                 <button
                   key={order.id}
@@ -94,7 +96,17 @@ export const OrderListView = () => {
                     {itemCount} item(s) · {formatDateHelper(order.created_at, "dd MMM yyyy · HH:mm")}
                   </p>
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-bold">{formatCurrency(order.total_price_idr)}</p>
+                    <div>
+                      <p className="text-sm font-bold">{totalPaid === 0 && discount > 0 ? "Gratis" : formatCurrency(totalPaid)}</p>
+                      {discount > 0 && (
+                        <p className="text-[10px] text-brand-400 line-through">{formatCurrency(order.total_price_idr)}</p>
+                      )}
+                      {discount > 0 && (
+                        <p className="text-[10px] font-medium text-emerald-700">
+                          {order.voucher_code ? `${order.voucher_code} · ` : ""}-{formatCurrency(discount)}
+                        </p>
+                      )}
+                    </div>
                     <p className="flex items-center gap-0.5 text-[11px] text-brand-400">
                       {humanizePaymentStatus(order.payment_status)} <ChevronRight size={14} />
                     </p>

@@ -22,6 +22,7 @@ import { useGetClassSessionsCategory } from "@/hooks/api/queries/admin/class-ses
 import { useGetDiscountVouchers } from "@/hooks/api/queries/admin/discount-voucher/use-get-discount-vouchers";
 import { IVouchersListItem } from "@/types/discount-voucher.interface";
 import { useDeleteDiscountVoucher } from "@/hooks/api/mutations/admin/use-delete-discount-voucher";
+import { formatSessionTypes } from "@/lib/voucher";
 
 export const DiscountVoucherListPageView = () => {
   const router = useRouter();
@@ -110,6 +111,11 @@ export const DiscountVoucherListPageView = () => {
       id: "category",
       text: "Discount Category",
       value: (row: IVouchersListItem) => <p className="capitalize">{row?.categories.length === 3 ? "Universal" : row.categories?.join(", ")}</p>,
+    },
+    {
+      id: "session_types",
+      text: "Session Types",
+      value: (row: IVouchersListItem) => <p>{formatSessionTypes(row.session_types)}</p>,
     },
     {
       id: "usage",

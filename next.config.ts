@@ -15,6 +15,21 @@ const nextConfig: NextConfig = {
     DEV_SECRET_KEY: process.env.NEXT_DEV_SECRET_KEY,
     DEV_SECRET_AUTH_KEY: process.env.NEXT_DEV_AUTH_SECRET_KEY,
     ENV: process.env.ENV,
+
+    // Midtrans client key — public by design (used by snap.js in the browser).
+    // Must match the BE's MIDTRANS_ENVIRONMENT (dev → sandbox, prod → production).
+    MIDTRANS_CLIENT_KEY: process.env.ENV === "dev" ? process.env.NEXT_DEV_MIDTRANS_CLIENT_KEY : process.env.NEXT_MIDTRANS_CLIENT_KEY,
+
+    // FE-12 stays behind this flag until D-16 (sandbox) is signed off.
+    ENABLE_PAYMENT_CHANGE: process.env.NEXT_PUBLIC_ENABLE_PAYMENT_CHANGE,
+
+    // FE-19 native VA/QRIS/GoPay page; off keeps the Snap-only flow.
+    ENABLE_NATIVE_PAYMENT: process.env.NEXT_PUBLIC_ENABLE_NATIVE_PAYMENT,
+
+    // Member discount rollout: dev defaults on; prod set the env flag explicitly
+    // after the BE-04/05/06/07 smoke passes.
+    ENABLE_MEMBER_VOUCHER_PACKAGE: process.env.NEXT_PUBLIC_ENABLE_MEMBER_VOUCHER_PACKAGE,
+    ENABLE_MEMBER_VOUCHER_LIFECYCLE: process.env.NEXT_PUBLIC_ENABLE_MEMBER_VOUCHER_LIFECYCLE,
   },
   images: {
     remotePatterns: [

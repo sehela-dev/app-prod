@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useEditCreditPackage } from "@/hooks/api/mutations/admin";
 import { Select, SelectItem, SelectGroup, SelectContent, SelectTrigger, SelectValue } from "@/components/ui/select";
+import InstructorSelect, { MultiValue } from "react-select";
+import { useGetInstructor } from "@/hooks/api/queries/admin/instructor";
 // import { useRouter } from "next/navigation";
 // import { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
@@ -46,6 +48,11 @@ const defaultValues: IPackageFormValues = {
   session_type_restriction: "all", //regular, private, special, or null
   place_restriction: "all", // offline, online, null
   class_ids_restriction: [], //specific class UUID or null
+  has_instructor_restriction: false,
+  instructor_ids_restriction: [], // specific instructor auth_user_id or empty
+  has_time_restriction: false,
+  eligible_start_time: "",
+  eligible_end_time: "",
   package_type: "purchase",
   is_active: true,
   is_visible: true,
@@ -62,6 +69,7 @@ export const EditCreditPacakgesPage = () => {
   const { data, isLoading } = useGetCreditPackageDetail(id as string);
 
   const { data: clasCategory, isLoading: loadingCategory } = useGetClassSessionsCategory({ page: 1, limit: 999, status: "true", sort_by: "name" });
+  const { data: instructorData, isLoading: loadingInstructors } = useGetInstructor({ page: 1, limit: 999, status: "active" });
   // const [open, setOpen] = useState(false);
 
   const classCategoryOption = useMemo(() => {
@@ -70,6 +78,17 @@ export const EditCreditPacakgesPage = () => {
       id: item.id,
     }));
   }, [clasCategory?.data]);
+
+  const instructorOptions = useMemo(() => {
+    const options = instructorData?.data?.map((item) => ({ value: item.id, label: item.full_name })) ?? [];
+    // Keep already-attached instructors visible even if they are now inactive.
+    for (const attached of data?.data?.instructor_ids_restriction ?? []) {
+      if (!options.some((option) => option.value === attached.id)) {
+        options.push({ value: attached.id, label: attached.name || attached.id });
+      }
+    }
+    return options;
+  }, [instructorData?.data, data?.data?.instructor_ids_restriction]);
 
   const values = useMemo(() => {
     if (!data?.data) return defaultValues;
@@ -82,6 +101,11 @@ export const EditCreditPacakgesPage = () => {
       session_type_restriction: !data?.data?.session_type_restriction ? "all" : data?.data?.session_type_restriction,
       place_restriction: !data?.data?.place_restriction ? "all" : data?.data?.place_restriction,
       class_ids_restriction: data?.data?.class_ids_restriction?.map((item) => item.id) || [], // Make sure to provide fallback
+      has_instructor_restriction: (data?.data?.instructor_ids_restriction?.length ?? 0) > 0,
+      instructor_ids_restriction: data?.data?.instructor_ids_restriction?.map((item) => item.id) || [],
+      has_time_restriction: !!(data?.data?.eligible_start_time && data?.data?.eligible_end_time),
+      eligible_start_time: data?.data?.eligible_start_time?.slice(0, 5) || "",
+      eligible_end_time: data?.data?.eligible_end_time?.slice(0, 5) || "",
       package_type: "purchase",
       is_active: data?.data?.is_active ?? true,
       is_visible: data?.data?.is_visible ?? true,
@@ -93,9 +117,39 @@ export const EditCreditPacakgesPage = () => {
 
   const methods = useForm({ defaultValues, values });
   const { control, handleSubmit } = methods;
+  const hasInstructorRestriction = methods.watch("has_instructor_restriction");
+  const hasTimeRestriction = methods.watch("has_time_restriction");
+  const hadInstructorRestriction = (data?.data?.instructor_ids_restriction?.length ?? 0) > 0;
+  const hadTimeRestriction = !!(data?.data?.eligible_start_time && data?.data?.eligible_end_time);
 
   const onSubmit = handleSubmit(async (data) => {
+    methods.clearErrors(["eligible_start_time", "eligible_end_time", "instructor_ids_restriction"]);
     try {
+      if (data?.has_instructor_restriction && !data?.instructor_ids_restriction?.length) {
+        methods.setError("instructor_ids_restriction", {
+          type: "manual",
+          message: "Select at least one instructor or turn off the instructor restriction.",
+        });
+        return;
+      }
+      const start = data?.eligible_start_time?.trim() || "";
+      const end = data?.eligible_end_time?.trim() || "";
+      if (data?.has_time_restriction) {
+        if (!start || !end) {
+          methods.setError("eligible_start_time", {
+            type: "manual",
+            message: "Start and end time must be set together.",
+          });
+          return;
+        }
+        if (start === end) {
+          methods.setError("eligible_end_time", {
+            type: "manual",
+            message: "Start and end time must differ.",
+          });
+          return;
+        }
+      }
       const payload: ICreatePackagePayload = {
         credits: parseInt(data?.credits as string),
         package_type: data?.package_type,
@@ -106,6 +160,16 @@ export const EditCreditPacakgesPage = () => {
         price_idr: parseInt(data?.price_idr as string),
         validity_days: parseInt(data?.validity_days as string),
         class_ids_restriction: data?.class_ids_restriction,
+        ...(data?.has_instructor_restriction
+          ? { instructor_ids_restriction: data.instructor_ids_restriction }
+          : hadInstructorRestriction
+            ? { instructor_ids_restriction: null }
+            : {}),
+        ...(data?.has_time_restriction
+          ? { eligible_start_time: start, eligible_end_time: end }
+          : hadTimeRestriction
+            ? { eligible_start_time: null, eligible_end_time: null }
+            : {}),
         place_restriction: data?.place_restriction,
         session_type_restriction: data?.session_type_restriction,
         is_shareable: data?.is_shareable,
@@ -118,11 +182,18 @@ export const EditCreditPacakgesPage = () => {
         router.push("/admin/credit-packages");
       }
     } catch (error) {
-      console.log(error);
+      const responseError = (error as { response?: { data?: { error?: { code?: string; message?: string } } } })?.response
+        ?.data?.error;
+      if (responseError?.code === "INVALID_INSTRUCTOR") {
+        methods.setError("instructor_ids_restriction", { type: "server", message: responseError.message });
+      }
+      if (responseError?.code === "INVALID_TIME_WINDOW") {
+        methods.setError("eligible_start_time", { type: "server", message: responseError.message });
+      }
     }
   });
 
-  if (loadingCategory || isLoading)
+  if (loadingCategory || loadingInstructors || isLoading)
     return (
       <div className="flex items-center justify-center py-6">
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -390,6 +461,108 @@ export const EditCreditPacakgesPage = () => {
                       </FormItem>
                     )}
                   />
+                  <FormField
+                    control={control}
+                    name="has_instructor_restriction"
+                    render={({ field }) => (
+                      <FormItem className="col-span-2 flex flex-row w-full justify-between items-center pt-2">
+                        <div className="flex flex-col gap-2">
+                          <FormLabel className=" text-brand-999 font-medium text-sm">Limit by instructor</FormLabel>
+                          <FormDescription>Off = semua instructor.</FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  {hasInstructorRestriction && (
+                    <FormField
+                      control={control}
+                      name="instructor_ids_restriction"
+                      render={({ field }) => (
+                        <FormItem className="col-span-2">
+                          <FormLabel className=" text-brand-999 font-medium text-sm">Instructors</FormLabel>
+                          <FormControl>
+                            <InstructorSelect
+                              isMulti
+                              isClearable
+                              isLoading={loadingInstructors}
+                              options={instructorOptions}
+                              value={instructorOptions.filter((option) => (field.value || []).includes(option.value))}
+                              onChange={(selected: MultiValue<{ value: string; label: string }>) =>
+                                field.onChange(selected.map((option) => option.value))
+                              }
+                              placeholder="Select instructors"
+                              classNamePrefix="instructor-select"
+                              classNames={{
+                                control: () =>
+                                  "!min-h-[42px] !border-2 !border-gray-200 !rounded-lg text-sm focus:outline-none focus:border-brand-500 transition-colors !bg-transparent",
+                                placeholder: () => "text-gray-400 text-sm",
+                                multiValue: () => "bg-brand-100",
+                                multiValueLabel: () => "text-brand-999",
+                                input: () => "text-brand-999 text-sm",
+                              }}
+                            />
+                          </FormControl>
+                          <FormDescription className="text-brand-500 font-medium">
+                            Select one or more instructors.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                  <FormField
+                    control={control}
+                    name="has_time_restriction"
+                    render={({ field }) => (
+                      <FormItem className="col-span-2 flex flex-row w-full justify-between items-center pt-2">
+                        <div className="flex flex-col gap-2">
+                          <FormLabel className=" text-brand-999 font-medium text-sm">Limit by time window</FormLabel>
+                          <FormDescription>Off = tanpa batas jam.</FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  {hasTimeRestriction && (
+                    <>
+                      <div className="col-span-2 grid grid-cols-2 gap-4">
+                        <FormField
+                          control={control}
+                          name="eligible_start_time"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-col">
+                              <FormLabel className=" text-brand-999 font-medium text-sm">Eligible start time (WIB)</FormLabel>
+                              <FormControl>
+                                <Input type="time" className="w-full border-2 border-gray-200 rounded-lg h-[42px]" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={control}
+                          name="eligible_end_time"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-col">
+                              <FormLabel className=" text-brand-999 font-medium text-sm">Eligible end time (WIB)</FormLabel>
+                              <FormControl>
+                                <Input type="time" className="w-full border-2 border-gray-200 rounded-lg h-[42px]" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <p className="col-span-2 text-xs text-gray-500">
+                        End time is exclusive; overnight windows (e.g. 22:00–02:00) are allowed.
+                      </p>
+                    </>
+                  )}
                   <FormField
                     control={control}
                     name="max_purchases_per_user"

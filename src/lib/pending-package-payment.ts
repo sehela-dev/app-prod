@@ -5,7 +5,8 @@
 export interface PendingPackagePayment {
   order_id: string;
   package_id: string;
-  snap_redirect_url: string;
+  /** Null for native VA/QRIS/GoPay rows — the payment page renders instructions. */
+  snap_redirect_url: string | null;
   /** Epoch ms when initiate succeeded — Midtrans payment window is 15 min from here. */
   initiated_at: number;
 }
@@ -24,8 +25,13 @@ export function getPendingPackagePayment(): PendingPackagePayment | null {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PendingPackagePayment>;
-    if (!parsed.order_id || !parsed.snap_redirect_url) return null;
-    return parsed as PendingPackagePayment;
+    if (!parsed.order_id) return null;
+    return {
+      order_id: parsed.order_id,
+      package_id: parsed.package_id ?? "",
+      snap_redirect_url: parsed.snap_redirect_url ?? null,
+      initiated_at: parsed.initiated_at ?? 0,
+    };
   } catch {
     return null;
   }

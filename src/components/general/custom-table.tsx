@@ -147,7 +147,7 @@ export const CustomTable = (props: TableContentProps) => {
                       </TableCell>
                     )}
                     {isMultiple && (
-                      <TableCell key={`check-${row?.id}`}>
+                      <TableCell key={`check-${row?.id}`} onClick={(e) => e.stopPropagation()}>
                         <Checkbox
                           id={row.id}
                           checked={selectedData?.includes?.(row?.id)}

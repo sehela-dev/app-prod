@@ -380,6 +380,11 @@ export interface ICreditsLedgerItem {
   amount: number;
   nilai_idr: number;
   nilai_idr_gross?: number | null;
+  original_amount_idr?: number | null;
+  discount_idr?: number | null;
+  voucher_code?: string | null;
+  actual_amount_paid_idr?: number | null;
+  per_credit_value_idr?: number | null;
   package_name: string | null;
   purchased_at: string | null;
   purchased_at_wib: string;

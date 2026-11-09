@@ -6,6 +6,6 @@ export const useGetEligibleCredits = (params?: IEligibleCreditsParams) =>
   useQuery({
     queryKey: ["user", "profile", "eligible-credits", params],
     queryFn: () => getEligibleCredits(params as IEligibleCreditsParams),
-    enabled: !!params?.class_id && !!params?.session_type && !!params?.place,
+    enabled: !!params?.class_session_id || (!!params?.class_id && !!params?.session_type && !!params?.place),
     refetchOnWindowFocus: false,
   });

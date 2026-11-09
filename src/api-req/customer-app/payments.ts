@@ -1,16 +1,32 @@
 import { axiosx } from "@/lib/axiosx";
 import { MAIN_API_URL } from "@/lib/config";
 import { IResponseData } from "@/lib/config";
+import type { PaymentInstructions } from "@/types/customer-app/payment.interface";
 
 // ----------------------------------------------------------------------
 // GET /payments/status/:order_id
 // ----------------------------------------------------------------------
 
 export interface IPaymentStatus {
+  id?: string;
   order_id: string;
   payment_id?: string;
-  booking_id?: string;
+  provider_txn_id?: string | null;
+  booking_id?: string | null;
+  /** BE returns `status` today; `transaction_status` is the new contract. */
+  status?: string;
+  /** Always a string: BE falls back to the local payment status before the webhook lands. */
   transaction_status: string;
+  payable_type?: string | null;
+  channel?: string | null;
+  channel_label?: string | null;
+  amount_idr?: number;
+  gross_amount_idr?: number;
+  snap_token?: string | null;
+  snap_redirect_url?: string | null;
+  payment_instructions?: PaymentInstructions | null;
+  created_at?: string;
+  updated_at?: string;
   payment_type?: string;
   gross_amount?: number;
   status_message?: string;
@@ -32,6 +48,8 @@ export interface IInitiatePackagePurchaseRequest {
   package_id: string;
   share_with_user_id?: string | null;
   share_with_email?: string | null;
+  payment_channel?: string;
+  voucher_code?: string;
 }
 
 export interface IInitiatePackagePurchaseResponse {
@@ -39,8 +57,14 @@ export interface IInitiatePackagePurchaseResponse {
   package_purchase_id: string;
   order_id: string;
   amount_idr: number;
-  snap_token: string;
-  snap_redirect_url: string;
+  original_amount_idr?: number;
+  voucher_code?: string | null;
+  voucher_discount_idr?: number;
+  payment_status?: string;
+  snap_token: string | null;
+  snap_redirect_url: string | null;
+  payment_instructions?: PaymentInstructions | null;
+  test_mode?: boolean;
 }
 
 export type TInitiatePackagePurchase = (
@@ -52,6 +76,38 @@ export const initiatePackagePurchase: TInitiatePackagePurchase = async (body) =>
     ...body,
     share_with_email: body.share_with_email?.trim().toLowerCase() || null,
   });
+  return res.data;
+};
+
+// ----------------------------------------------------------------------
+// POST /payments/retry — new attempt for the same package purchase.
+// Omit payment_channel to retry the current method; send it to change method.
+// ----------------------------------------------------------------------
+
+export interface IRetryPackagePaymentRequest {
+  order_id: string;
+  payment_channel?: string;
+}
+
+export interface IRetryPackagePaymentResponse {
+  payment_id: string;
+  package_purchase_id: string;
+  order_id: string;
+  amount_idr: number;
+  snap_token: string | null;
+  snap_redirect_url: string | null;
+  payment_instructions?: PaymentInstructions | null;
+  channel?: string | null;
+  channel_label?: string | null;
+  test_mode?: boolean;
+}
+
+export type TRetryPackagePayment = (
+  body: IRetryPackagePaymentRequest,
+) => Promise<IResponseData<IRetryPackagePaymentResponse>>;
+
+export const retryPackagePayment: TRetryPackagePayment = async (body) => {
+  const res = await axiosx(true).post(`${MAIN_API_URL}/payments/retry`, body);
   return res.data;
 };
 

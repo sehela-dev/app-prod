@@ -11,6 +11,7 @@ import { useDebounce } from "@/hooks";
 import { useGetCreditPackage } from "@/hooks/api/queries/admin/credit-package";
 
 import { formatCurrency } from "@/lib/helper";
+import { formatEligibleTime, formatInstructorNames } from "@/lib/credit-package";
 import { ICreditPackageItem } from "@/types/credit-package.interface";
 import { IOrderItem } from "@/types/orders.interface";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -165,6 +166,24 @@ export const CreditPackagePageView = () => {
       value: (row: ICreditPackageItem) => (
         <p className="capitalize max-w-[70%] flex-wrap text-wrap">
           {row.class_ids_restriction?.length > 0 ? row?.class_ids_restriction.map((item) => item.name).join(", ") : "All Class"}
+        </p>
+      ),
+    },
+    {
+      id: "instructor_ids_restriction",
+      text: "Instructors",
+      value: (row: ICreditPackageItem) => (
+        <p className="max-w-[70%] flex-wrap text-wrap">
+          {formatInstructorNames(row.instructor_ids_restriction) ?? "Semua instructor"}
+        </p>
+      ),
+    },
+    {
+      id: "eligible_time_window",
+      text: "Time Window",
+      value: (row: ICreditPackageItem) => (
+        <p className="whitespace-nowrap">
+          {formatEligibleTime(row.eligible_start_time, row.eligible_end_time) ?? "Tanpa batas jam"}
         </p>
       ),
     },

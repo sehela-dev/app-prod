@@ -1,4 +1,5 @@
 import { IPublicPagination } from "./public.interface";
+import type { PaymentInstructions } from "./payment.interface";
 
 export type TFulfillmentStatus = "pending" | "ready_for_pickup" | "shipped" | "completed" | "canceled";
 export type TDeliveryMethod = "pickup" | "third_party";
@@ -35,17 +36,23 @@ export interface ICreateOrderPayload {
   address_id?: string;
   items: ICreateOrderItem[];
   notes?: string;
+  payment_channel?: string;
+  voucher_code?: string;
 }
 
 export interface ICreateOrderResponse {
   order_id: string;
   order_code: string;
   amount_idr: number;
+  original_amount_idr?: number;
+  voucher_code?: string | null;
+  voucher_discount_idr?: number;
   fulfillment_status: TFulfillmentStatus;
   delivery_method: TDeliveryMethod;
   payment_status: string;
-  snap_token?: string;
-  snap_redirect_url?: string;
+  snap_token?: string | null;
+  snap_redirect_url?: string | null;
+  payment_instructions?: PaymentInstructions | null;
 }
 
 export interface IOrderListItem {
@@ -80,8 +87,11 @@ export interface IMemberOrder {
   cancel_reason: string | null;
   order_code: string;
   payment_status: string;
+  voucher_code?: string | null;
+  voucher_discount_idr?: number | null;
   items: IOrderListItem[];
   payment?: { order_id: string; status: string; provider: string } | null;
+  payment_instructions?: PaymentInstructions | null;
   rental?: {
     id: string;
     status: string;

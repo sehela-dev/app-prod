@@ -42,6 +42,8 @@ export * from "./use-create-location";
 export * from "./use-edit-location";
 export * from "./use-delete-location";
 export * from "./use-admin-change-password";
+export * from "./use-update-payment-channels";
+export * from "./use-pending-payment-actions";
 export * from "./use-return-rental";
 export * from "./use-create-admin";
 export * from "./use-update-admin";

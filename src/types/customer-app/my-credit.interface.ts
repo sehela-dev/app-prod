@@ -21,6 +21,9 @@ export interface IMyCreditItem {
   place_restriction?: string | string[] | null;
   class_ids_restriction?: string[] | null;
   class_type_restriction?: string | string[] | null;
+  instructor_ids_restriction?: { id: string; name: string }[] | null;
+  eligible_start_time?: string | null;
+  eligible_end_time?: string | null;
   is_owner: boolean;
   is_shared: boolean;
   is_shareable?: boolean | null;

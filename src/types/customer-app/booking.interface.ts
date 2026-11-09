@@ -1,13 +1,15 @@
 import { IResponseData } from "@/lib/config";
+import type { PaymentInstructions } from "./payment.interface";
 
 // ----------------------------------------------------------------------
 // GET /credit-packages/eligible
 // ----------------------------------------------------------------------
 
 export interface IEligibleCreditsParams {
-  class_id: string;
-  session_type: string;
-  place: string;
+  class_session_id?: string;
+  class_id?: string;
+  session_type?: string;
+  place?: string;
 }
 
 export interface IEligibleCreditPackage {
@@ -24,6 +26,9 @@ export interface IEligibleCreditPackage {
   session_type_restriction?: string | string[] | null;
   place_restriction?: string | string[] | null;
   class_ids_restriction?: string[] | null;
+  instructor_ids_restriction?: { id: string; name: string }[] | null;
+  eligible_start_time?: string | null;
+  eligible_end_time?: string | null;
   is_owner: boolean;
   is_shared: boolean;
   is_shareable?: boolean | null;
@@ -63,6 +68,7 @@ export interface ICreatePublicBookingRequest {
   class_session_id: string;
   payment_method: "credits" | "midtrans";
   voucher_code?: string;
+  payment_channel?: string;
   notes?: string;
 }
 
@@ -81,9 +87,8 @@ export interface ICreatePublicBookingResponse {
   payment_method: string;
   snap_token?: string;
   snap_redirect_url?: string;
-  qris_image_url?: string;
-  payment_instructions?: string;
-  expires_at?: string;
+  enabled_payments?: string[];
+  payment_instructions?: PaymentInstructions | null;
 }
 
 export type TCreatePublicBooking = (body: ICreatePublicBookingRequest) => Promise<IResponseData<ICreatePublicBookingResponse>>;
@@ -94,7 +99,9 @@ export type TCreatePublicBooking = (body: ICreatePublicBookingRequest) => Promis
 export interface IValidateVoucherRequest {
   voucher_code: string;
   class_session_id?: string;
+  package_id?: string;
   cart_total_idr?: number;
+  transaction_type?: "booking" | "package_purchase" | "order";
 }
 
 export interface IValidateVoucherResponse {
@@ -107,6 +114,7 @@ export interface IValidateVoucherResponse {
   calculated_discount: number;
   cart_total_idr: number;
   discounted_total_idr: number;
+  session_types?: string[] | null;
   error_code?: string | null;
   error_message?: string | null;
 }
@@ -158,7 +166,7 @@ export interface ICancelBookingData {
 export type TCancelBooking = (params: ICancelBookingParams) => Promise<IResponseData<ICancelBookingData>>;
 
 // ----------------------------------------------------------------------
-// POST /profile/bookings/:booking_id/repay (retry payment) - migrated from /public
+// POST /profile/bookings/:booking_id/payment-session { intent: "retry" }
 // ----------------------------------------------------------------------
 
 export interface IRepayBookingResponse {
@@ -166,10 +174,19 @@ export interface IRepayBookingResponse {
   payment_id: string;
   order_id: string;
   amount_idr?: number;
+  intent?: "retry" | "change";
+  channel?: string | null;
+  channel_label?: string | null;
   snap_token?: string;
   snap_redirect_url?: string;
-  qris_image_url?: string;
-  expires_at?: string;
+  payment_instructions?: PaymentInstructions | null;
 }
 
-export type TRepayBooking = (bookingId: string) => Promise<IResponseData<IRepayBookingResponse>>;
+export interface IBookingPaymentSessionParams {
+  bookingId: string;
+  intent: "retry" | "change";
+  payment_channel?: string;
+}
+
+export type TBookingPaymentSession = (params: IBookingPaymentSessionParams) => Promise<IResponseData<IRepayBookingResponse>>;
+export type TRepayBooking = (params: IBookingPaymentSessionParams) => Promise<IResponseData<IRepayBookingResponse>>;

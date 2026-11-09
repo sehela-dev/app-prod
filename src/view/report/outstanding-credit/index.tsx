@@ -1335,6 +1335,36 @@ function CreditsLedgerLog() {
         value: (row: ICreditsLedgerItem) => row.package_name ?? "—",
       },
       {
+        id: "original_amount_idr",
+        text: "Harga Asli",
+        value: (row: ICreditsLedgerItem) =>
+          row.original_amount_idr == null ? "—" : formatCurrency(row.original_amount_idr),
+      },
+      {
+        id: "discount_idr",
+        text: "Diskon",
+        value: (row: ICreditsLedgerItem) =>
+          row.discount_idr == null ? "—" : formatCurrency(row.discount_idr),
+      },
+      {
+        id: "voucher_code",
+        text: "Voucher",
+        value: (row: ICreditsLedgerItem) =>
+          row.voucher_code ? <span className="font-mono text-xs">{row.voucher_code}</span> : "—",
+      },
+      {
+        id: "actual_amount_paid_idr",
+        text: "Dibayar",
+        value: (row: ICreditsLedgerItem) =>
+          row.actual_amount_paid_idr == null ? "—" : formatCurrency(row.actual_amount_paid_idr),
+      },
+      {
+        id: "per_credit_value_idr",
+        text: "Nilai per Kredit",
+        value: (row: ICreditsLedgerItem) =>
+          row.per_credit_value_idr == null ? "—" : formatCurrency(row.per_credit_value_idr),
+      },
+      {
         id: "purchased_at",
         text: "Tgl Beli",
         value: (row: ICreditsLedgerItem) =>

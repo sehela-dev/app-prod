@@ -1,17 +1,24 @@
 "use client";
+import { BaseDialogComponent } from "@/components/general/base-dialog-component";
+import { PaymentChannelList } from "@/components/general/payment-channel-list";
 import { NavHeaderComponent } from "@/components/layout/header-checkout";
 import { Button } from "@/components/ui/button";
-import { useGetPaymentHistoryDetail } from "@/hooks/api/queries/customer/payments";
+import { useRetryPackagePayment } from "@/hooks/api/mutations/customers";
+import { useGetPaymentChannels, useGetPaymentHistoryDetail, useGetPaymentStatus } from "@/hooks/api/queries/customer/payments";
+import { ENABLE_NATIVE_PAYMENT } from "@/lib/config";
 import { formatCurrency, formatDateHelper } from "@/lib/helper";
+import { isPaymentRetryable, isPaymentTerminal } from "@/lib/payment-status";
 import {
   formatExpiryCountdown,
   getPendingPackagePayment,
   humanizePaymentStatus,
+  setPendingPackagePayment,
 } from "@/lib/pending-package-payment";
 import { getPurchaseKind, PURCHASE_KIND_BADGE, PURCHASE_KIND_ICON_BG, PURCHASE_KIND_LABEL } from "@/lib/purchase-kind";
-import { AlertCircle, Gem as GemIcon, Loader2, Package as PackageIcon, ReceiptText, Ticket as TicketIcon } from "lucide-react";
+import { AlertCircle, Gem as GemIcon, Loader2, Package as PackageIcon, ReceiptText, RefreshCw, Ticket as TicketIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { NativeInstructionsComponent } from "@/view/payment/native-instructions";
 
 const SUCCESS = ["settlement", "capture"];
 
@@ -20,8 +27,11 @@ const SUCCESS = ["settlement", "capture"];
 // bookings add booking_status, both add voucher_code/discount_idr.
 export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
   const router = useRouter();
-  const { data, isLoading, isError } = useGetPaymentHistoryDetail(refId);
+  const { data, isLoading, isError, refetch } = useGetPaymentHistoryDetail(refId);
   const item = data?.data;
+  const [changeOpen, setChangeOpen] = useState(false);
+  const [changeChannel, setChangeChannel] = useState<string | null>(null);
+  const retryMutation = useRetryPackagePayment();
 
   const kind = getPurchaseKind(item?.payable_type);
   const isPackage = kind === "credit";
@@ -29,6 +39,13 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
   const isProduct = kind === "product";
   const status = item?.status ? String(item.status) : "";
   const serverPending = status === "pending";
+  const orderId = item?.order_id
+    ? String(item.order_id)
+    : item?.provider_txn_id
+      ? String(item.provider_txn_id)
+      : null;
+  const { data: channelsData } = useGetPaymentChannels(ENABLE_NATIVE_PAYMENT && isPackage);
+  const channels = channelsData?.data ?? [];
 
   // Expiry anchor: server expires_at first, created_at + 15m fallback.
   const [now, setNow] = useState(() => Date.now());
@@ -46,6 +63,16 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
   const timeExpired = serverPending && expiresAtMs > 0 && remainingMs <= 0;
   const displayStatus = timeExpired ? "expired" : status;
   const isPending = serverPending && !timeExpired;
+  const { data: statusData, refetch: refetchStatus } = useGetPaymentStatus(isPackage && isPending ? orderId : null);
+  const pi = statusData?.data?.payment_instructions ?? null;
+  const nativeInstructions = pi && pi.type !== "redirect" ? pi : null;
+  const paymentRemainingMs = pi?.expires_at
+    ? Math.max(0, Date.parse(pi.expires_at) - now)
+    : remainingMs;
+
+  useEffect(() => {
+    if (isPaymentTerminal(statusData?.data?.transaction_status ?? null)) void refetch();
+  }, [statusData?.data?.transaction_status, refetch]);
 
   // Pending resume: row snap URL first (pending-only per BE), then stored.
   // Strict new tab — never same-tab redirect; blocked popups fall back to
@@ -59,7 +86,7 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
     if (isPackage) {
       const packageId = String(item.package_id ?? item.payable_id ?? "");
       const qs = new URLSearchParams({
-        ...(item.provider_txn_id || item.order_id ? { order_id: String(item.provider_txn_id ?? item.order_id) } : {}),
+        ...(orderId ? { order_id: orderId } : {}),
         ...(url ? { snap_redirect_url: url } : {}),
         ...(item.expires_at ? { expires_at: String(item.expires_at) } : {}),
         ...(item.created_at ? { created_at: String(item.created_at) } : {}),
@@ -68,8 +95,38 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
     } else if (isBooking && item.payable_id) {
       router.push(`/profile/my-sessions/${String(item.payable_id)}`);
     } else if (isProduct) {
-      router.push(item.payable_id ? `/profile/orders/${String(item.payable_id)}` : "/profile/orders");
+      router.push(item.payable_id ? `/profile/orders/${String(item.payable_id)}/payment` : "/profile/orders");
     }
+  };
+
+  const handlePackageAction = (paymentChannel?: string) => {
+    if (!isPackage || !orderId) return;
+    retryMutation.mutate(
+      {
+        order_id: orderId,
+        ...(paymentChannel ? { payment_channel: paymentChannel } : {}),
+      },
+      {
+        onSuccess: (res) => {
+          setChangeOpen(false);
+          setChangeChannel(null);
+          const packageId = String(item?.package_id ?? item?.payable_id ?? "");
+          setPendingPackagePayment({
+            order_id: res.data.order_id,
+            package_id: packageId,
+            snap_redirect_url: res.data.snap_redirect_url ?? null,
+            initiated_at: Date.now(),
+          });
+          const qs = new URLSearchParams({ order_id: res.data.order_id });
+          if (res.data.snap_redirect_url) qs.set("snap_redirect_url", res.data.snap_redirect_url);
+          if (res.data.payment_instructions?.expires_at) qs.set("expires_at", res.data.payment_instructions.expires_at);
+          router.push(packageId ? `/topup-credit/${packageId}/payment?${qs.toString()}` : "/profile/purchase-history");
+        },
+        onError: () => {
+          void refetch();
+        },
+      },
+    );
   };
 
   if (isLoading) {
@@ -170,9 +227,56 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
           </div>
         </div>
 
-        {isPending && (
+        {nativeInstructions && isPending && (
+          <NativeInstructionsComponent
+            instructions={nativeInstructions}
+            amountIdr={statusData?.data?.amount_idr ?? statusData?.data?.gross_amount_idr ?? amount}
+            channelLabel={statusData?.data?.channel_label}
+            remainingMs={paymentRemainingMs}
+          />
+        )}
+
+        {isPending && !nativeInstructions && (
           <Button className="min-h-12 w-full text-sm font-extrabold" onClick={handleContinue}>
             Continue payment
+          </Button>
+        )}
+
+        {isPending && (
+          <Button
+            variant="outline"
+            className="min-h-11 w-full text-sm font-semibold"
+            onClick={() => {
+              void refetchStatus();
+              void refetch();
+            }}
+          >
+            I&apos;ve completed payment — check status
+          </Button>
+        )}
+
+        {isPackage && !isPending && (isPaymentRetryable(status) || displayStatus === "expired") && (
+          <Button
+            className="min-h-12 w-full text-sm font-extrabold"
+            onClick={() => handlePackageAction()}
+            disabled={retryMutation.isPending}
+          >
+            {retryMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Retry payment
+          </Button>
+        )}
+
+        {isPackage && (isPending || isPaymentRetryable(status) || displayStatus === "expired") && channels.length > 0 && (
+          <Button
+            variant="outline"
+            className="min-h-12 w-full text-sm font-semibold"
+            onClick={() => {
+              setChangeChannel(null);
+              setChangeOpen(true);
+            }}
+            disabled={retryMutation.isPending}
+          >
+            Change payment method
           </Button>
         )}
         {!isPending && (SUCCESS.includes(status)) && (
@@ -199,6 +303,36 @@ export const PurchaseHistoryDetailView = ({ refId }: { refId: string }) => {
           </Button>
         </div>
       </div>
+
+      {changeOpen && (
+        <BaseDialogComponent
+          isOpen={changeOpen}
+          title="Change payment method"
+          btnConfirm={retryMutation.isPending ? "Working..." : "Confirm change"}
+          onConfirm={() => {
+            if (changeChannel) handlePackageAction(changeChannel);
+          }}
+          onClose={() => {
+            setChangeOpen(false);
+            setChangeChannel(null);
+          }}
+          onCloseText="Cancel"
+          isDisabled={!changeChannel || retryMutation.isPending}
+        >
+          {channels.length === 0 ? (
+            <p className="text-center text-sm text-brand-500/70">No payment methods are available.</p>
+          ) : (
+            <div className="max-h-[50vh] overflow-y-auto">
+              <PaymentChannelList
+                channels={channels}
+                selected={changeChannel}
+                defaultOpen
+                onSelect={setChangeChannel}
+              />
+            </div>
+          )}
+        </BaseDialogComponent>
+      )}
     </div>
   );
 };
