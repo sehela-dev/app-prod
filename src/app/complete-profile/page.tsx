@@ -6,11 +6,11 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Complete Profile — Sehela Space",
   description: "Complete Profile at Sehela Space",
+  robots: { index: false, follow: false },
 };
 
-
-export const dynamic = "force-dynamic";
-
+// Static shell: token/email live in the query string and are read client-side,
+// so prerendering once keeps bots/scanners off the function bill.
 export default function Home() {
   return (
     <Suspense fallback={null}>
