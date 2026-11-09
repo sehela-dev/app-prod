@@ -21,12 +21,12 @@ const NATIVE_ONLY_CHANNELS = new Set([
 // endpoint also sends a 5-min cache header.
 export const useGetPaymentChannels = (enabled = true) =>
   useQuery({
-    queryKey: ["customer", "payment-channels", ENV === "main" ? "api" : "snap-only"],
+    queryKey: ["customer", "payment-channels", ENV === "dev" ? "snap-only" : "api"],
     queryFn: async () => {
       const res = await getPaymentChannels();
       // shortcut: dev backend still runs the pre-Snap native path; drop this
       // guard once dev is on profile v52 / payments v29.
-      if (ENV === "main") return res;
+      if (ENV !== "dev") return res;
       return { ...res, data: res.data.filter((channel) => !NATIVE_ONLY_CHANNELS.has(channel.code)) };
     },
     enabled,

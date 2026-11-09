@@ -1,6 +1,8 @@
 import { ENV, MIDTRANS_CLIENT_KEY } from "./config";
 
-const SNAP_SRC = ENV === "main" ? "https://app.midtrans.com/snap/snap.js" : "https://app.sandbox.midtrans.com/snap/snap.js";
+const SNAP_SRC = ENV === "dev"
+  ? "https://app.sandbox.midtrans.com/snap/snap.js"
+  : "https://app.midtrans.com/snap/snap.js";
 
 let pending: Promise<void> | null = null;
 
