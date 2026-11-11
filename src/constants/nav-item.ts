@@ -33,9 +33,7 @@ export const dataNavMarketPlace = [
     title: "Attendence",
     url: "#",
     icon: Users,
-    items: [
-      { title: "Checked In", url: "/admin/attendance/checked-in", icon: ScanLine, permission: "session:view" },
-    ],
+    items: [{ title: "Checked In", url: "/admin/attendance/checked-in", icon: ScanLine, permission: "session:view" }],
   },
   { title: "Credit Packages", url: "/admin/credit-packages", icon: Gem, permission: "credit_package:view" },
   {
@@ -98,6 +96,8 @@ export const TNC_PARAGRAPHS = [
   "Saya mengakui dan menyetujui bahwa terdapat resiko fisik yang mungkin terlibat dalam pelaksanaan kelas dan Saya tidak memiliki kondisi medis yang dapat menghalangi keikutsertaan Saya atas kegiatan di Sehela Space dan untuk itu, Saya bertanggung jawab secara penuh atas resiko dan/atau atau cidera yang dapat timbul setelah mengikuti kegiatan di Sehela Space.",
   "Saya mengakui dan menyetujui untuk menjaga barang bawaan Saya saat berada di Sehela Space. Sehela Space tidak bertanggung jawab atas kehilangan atau kerusakan atas barang Saya.",
   "Dalam hal terdapat barang yang tertinggal di Sehela Space, maka barang tersebut hanya akan disimpan selama 2 (dua) minggu. Dalam hal barang tersebut tidak diklaim oleh siapapun, maka Sehela Space memiliki hak untuk membuang atau mendonasikan barang tersebut.",
+  "⁠Sisa kredit dari paket terakhir dapat di-rollover apabila pelanggan membeli paket baru paling lambat 30 (tiga puluh) hari setelah masa berlaku paket sebelumnya berakhir. Apabila paket baru tidak dibeli dalam jangka waktu tersebut, sisa kredit dinyatakan hangus.",
+  "Kredit hasil rollover akan digabungkan dengan kredit paket baru dan memiliki tanggal kedaluwarsa yang sama, yang dihitung sejak hari pertama kredit digunakan. Rollover hanya berlaku untuk satu paket terakhir.",
   "Saya mengerti dan menyetujui bahwa Sehela Space dapat melakukan dokumentasi, termasuk namun tidak terbatas pada foto, video dan/atau dokumentasi lainnya atas kegiatan yang berada di Sehela Space serta menggunakan dokumentasi tersebut di social media.",
   "Sehela Space memiliki hak untuk merubah Syarat dan Ketentuan ini dari waktu ke waktu atas kebijakannya sendiri.",
 ] as const;
