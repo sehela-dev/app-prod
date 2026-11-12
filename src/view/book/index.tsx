@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import { useGetPublicLocations, useGetPublicSessionsInfinite } from "@/hooks/api/queries/customer/public";
 import { formatDateHelper } from "@/lib/helper";
 
-const DATE_RANGE_DAYS = 7;
+const DATE_RANGE_DAYS = 30;
 
 function SessionDateStrip({ selectedDate, onSelect }: { selectedDate?: string; onSelect: (d: string) => void }) {
   const today = useMemo(() => startOfDay(new Date()), []);
