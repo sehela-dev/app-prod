@@ -12,7 +12,7 @@ export default function TermsAndConditionsPage() {
       <div className="bg-brand-500 px-4 py-8 text-gray-50">
         <h1 className="text-2xl font-extrabold leading-tight">Terms and Conditions</h1>
         <p className="mt-1 text-sm text-brand-50/90">Syarat dan Ketentuan Sehela Space — PT Ruang Bugar Sehela</p>
-        <p className="mt-1 text-xs text-brand-100">Last updated from TNC dialog • Scroll to read all 12 points</p>
+        {/* <p className="mt-1 text-xs text-brand-100">Last updated from TNC dialog • Scroll to read all 12 points</p> */}
       </div>
 
       <div className="px-4 py-6 flex flex-col gap-4">
@@ -30,8 +30,6 @@ export default function TermsAndConditionsPage() {
             </li>
           ))}
         </ol>
-
-
       </div>
     </div>
   );
