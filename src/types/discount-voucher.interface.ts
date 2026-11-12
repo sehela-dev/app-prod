@@ -50,6 +50,8 @@ export interface IApplyDiscountPaylaod {
   code: string;
   transaction_type: string | TCategoryVoucher;
   cart_total_idr: number;
+  categories?: string[];
+  session_type?: string;
   user_id?: string | null;
 }
 export interface IApplyDiscountResponse {

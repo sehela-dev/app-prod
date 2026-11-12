@@ -270,11 +270,23 @@ export const DetailFormAddTransaction = () => {
 
   const onApplyDiscount = async () => {
     try {
+      // Restricted vouchers need one session type; mirror the create-transaction
+      // rule (sessions only, all same type). Mixed carts stay ineligible.
+      // shortcut: package-only carts stay ineligible — the package list does not
+      // return session_type_restriction yet.
+      const classItems = (cartItems ?? []).filter((item) => item.type === "class");
+      const sessionTypes = [
+        ...new Set(classItems.map((item) => item.session_type).filter((t): t is string => Boolean(t))),
+      ];
+      const sessionType = classItems.length > 0 && classItems.length === cartItems?.length && sessionTypes.length === 1
+        ? sessionTypes[0]
+        : undefined;
       const payload = {
         code: selectedVoucher?.code as string,
         transaction_type: selectedVoucher?.category as string,
         cart_total_idr: totalPrice,
         categories: getCategoryFromItems(),
+        ...(sessionType ? { session_type: sessionType } : null),
         ...(customerData?.id ? { user_id: customerData.id as string } : null),
       };
       const res = await applyDiscountCode(payload);

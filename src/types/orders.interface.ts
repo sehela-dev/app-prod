@@ -87,6 +87,8 @@ export interface IAdminCartItemData {
   quantity: number;
   subtotal: number;
   type?: string;
+  /** Session type (regular/private/special) for class items; drives voucher preview. */
+  session_type?: string;
   share_with_user_id?: string;
   share_with_email?: string;
   location_id?: string;
