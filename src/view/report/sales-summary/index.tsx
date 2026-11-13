@@ -84,7 +84,7 @@ export const SalesSummaryView = () => {
             <span className="whitespace-nowrap">{formatDayDate(row.date)}</span>
           ),
       },
-      { id: "online_payment", text: "Online Payment", value: (row: ISalesSummaryDay, i: number) => cell(row, i, row.online_payment) },
+      { id: "online_payment", text: "Bank Transfer", value: (row: ISalesSummaryDay, i: number) => cell(row, i, row.online_payment) },
       { id: "cash", text: "Cash", value: (row: ISalesSummaryDay, i: number) => cell(row, i, row.cash) },
       { id: "edc", text: "EDC", value: (row: ISalesSummaryDay, i: number) => cell(row, i, row.edc) },
       { id: "midtrans", text: "Midtrans", value: (row: ISalesSummaryDay, i: number) => cell(row, i, row.midtrans) },
