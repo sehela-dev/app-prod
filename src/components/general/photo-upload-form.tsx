@@ -7,6 +7,7 @@ import { FormField, FormItem, FormControl, FormMessage } from "@/components/ui/f
 import { Button } from "@/components/ui/button";
 import { X, Upload, Image as IconImage, ImagePlus } from "lucide-react";
 import { toast } from "sonner";
+import { compressImage } from "@/lib/image";
 
 interface PhotoUploadProps {
   name: string;
@@ -22,8 +23,23 @@ interface PhotoItem {
 }
 
 // ponytail: BE ImageMagick WASM has no HEIC codec — uploads would be silently dropped; widen this set if the BE gains one
-export const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"]);
-export const UNSUPPORTED_FILE_MESSAGE = "Unsupported image format. Please use JPG, PNG, WEBP, GIF, or AVIF (no HEIC).";
+export const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+export const UNSUPPORTED_FILE_MESSAGE = "Unsupported image format. Please use PNG, JPG, JPEG, or WEBP.";
+export const IMAGE_PROCESS_ERROR = "Could not process this image. Please try another file.";
+
+const readAsDataURL = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+// Files over 2MB are compressed to WEBP before upload.
+const preparePhoto = async (file: File) => {
+  const compressed = await compressImage(file);
+  return { file: compressed, preview: await readAsDataURL(compressed) };
+};
 
 // Compact inline photo cell for bulk table rows — pick/preview/remove in 40px, no dialog.
 // Photo value shape matches PhotoItem[] so createFormData single-photo extraction works.
@@ -57,7 +73,7 @@ export const InlinePhotoCell = ({ name }: { name: string }) => {
                   <ImagePlus size={16} />
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                    accept="image/jpeg,image/png,image/webp"
                     className="hidden"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
@@ -67,9 +83,11 @@ export const InlinePhotoCell = ({ name }: { name: string }) => {
                         toast.error(UNSUPPORTED_FILE_MESSAGE, { position: "top-center" });
                         return;
                       }
-                      const reader = new FileReader();
-                      reader.onload = (ev) => field.onChange([{ id: `${name}-0`, file, preview: ev.target?.result as string, isCover: true }]);
-                      reader.readAsDataURL(file);
+                      preparePhoto(file)
+                        .then(({ file: prepared, preview }) =>
+                          field.onChange([{ id: `${name}-0`, file: prepared, preview, isCover: true }]),
+                        )
+                        .catch(() => toast.error(IMAGE_PROCESS_ERROR, { position: "top-center" }));
                     }}
                   />
                 </label>
@@ -105,14 +123,13 @@ export function PhotoUploadForm({ name, maxPhotos = 4, label = "Photo Product" }
   }, []);
 
   const processFiles = useCallback(
-    (files: FileList | null, currentPhotos: PhotoItem[], onComplete: (photos: PhotoItem[]) => void) => {
+    async (files: FileList | null, currentPhotos: PhotoItem[], onComplete: (photos: PhotoItem[]) => void) => {
       if (!files || files.length === 0) {
         onComplete(currentPhotos);
         return;
       }
 
-      const newPhotos = [...currentPhotos];
-      const remainingSlots = maxPhotos - newPhotos.length;
+      const remainingSlots = maxPhotos - currentPhotos.length;
       const validFiles = Array.from(files)
         .slice(0, remainingSlots)
         .filter((file) => SUPPORTED_IMAGE_TYPES.has(file.type));
@@ -120,31 +137,32 @@ export function PhotoUploadForm({ name, maxPhotos = 4, label = "Photo Product" }
       setTypeError(validFiles.length === 0 && Array.from(files).length > 0);
 
       if (validFiles.length === 0) {
-        onComplete(newPhotos);
+        onComplete(currentPhotos);
         return;
       }
 
-      let loadedCount = 0;
-
-      validFiles.forEach((file) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const preview = e.target?.result as string;
-          newPhotos.push({
-            id: generateId(),
-            file,
-            preview,
-            isCover: newPhotos.length === 1, // First photo is cover by default
-          });
-
-          loadedCount++;
-          // Call onComplete once all files are loaded
-          if (loadedCount === validFiles.length) {
-            onComplete(newPhotos);
+      const prepared = await Promise.all(
+        validFiles.map(async (file) => {
+          try {
+            return await preparePhoto(file);
+          } catch {
+            return null;
           }
-        };
-        reader.readAsDataURL(file);
+        }),
+      );
+      if (prepared.some((photo) => !photo)) toast.error(IMAGE_PROCESS_ERROR, { position: "top-center" });
+
+      const newPhotos = [...currentPhotos];
+      prepared.forEach((photo) => {
+        if (!photo) return;
+        newPhotos.push({
+          id: generateId(),
+          file: photo.file,
+          preview: photo.preview,
+          isCover: newPhotos.length === 1, // First photo is cover by default
+        });
       });
+      onComplete(newPhotos);
     },
     [maxPhotos],
   );
@@ -195,18 +213,19 @@ export function PhotoUploadForm({ name, maxPhotos = 4, label = "Photo Product" }
     (id: string, onChange: any) => {
       const input = document.createElement("input");
       input.type = "file";
-      input.accept = "image/jpeg,image/png,image/webp,image/gif,image/avif";
+      input.accept = "image/jpeg,image/png,image/webp";
       input.onchange = (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
-        if (file && SUPPORTED_IMAGE_TYPES.has(file.type)) {
-          const reader = new FileReader();
-          reader.onload = (readEvent) => {
-            const preview = readEvent.target?.result as string;
-            const updated = photos.map((p) => (p.id === id ? { ...p, file, preview } : p));
-            onChange(updated);
-          };
-          reader.readAsDataURL(file);
+        if (!file) return;
+        if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
+          toast.error(UNSUPPORTED_FILE_MESSAGE, { position: "top-center" });
+          return;
         }
+        preparePhoto(file)
+          .then(({ file: prepared, preview }) => {
+            onChange(photos.map((p) => (p.id === id ? { ...p, file: prepared, preview } : p)));
+          })
+          .catch(() => toast.error(IMAGE_PROCESS_ERROR, { position: "top-center" }));
       };
       input.click();
     },
@@ -236,7 +255,7 @@ export function PhotoUploadForm({ name, maxPhotos = 4, label = "Photo Product" }
                 <input
                   type="file"
                   multiple
-                  accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                  accept="image/jpeg,image/png,image/webp"
                   onChange={(e) => handleFileInput(e, onChange)}
                   className="hidden"
                   id={`photo-input-${name}`}
@@ -313,7 +332,7 @@ export function PhotoUploadForm({ name, maxPhotos = 4, label = "Photo Product" }
             <p className="text-sm text-destructive mt-4">{UNSUPPORTED_FILE_MESSAGE}</p>
           ) : null}
           <p className="text-xs text-muted-foreground mt-3">
-            JPG, PNG, WEBP, GIF, or AVIF &middot; {maxPhotos} max &middot; automatically converted to WEBP on upload
+            PNG, JPG, JPEG, or WEBP &middot; {maxPhotos} max &middot; max 2 MB, larger images are compressed to WEBP on upload
           </p>
           <p className="text-sm text-muted-foreground mt-1">
             {photos.length}/{maxPhotos} photos uploaded
