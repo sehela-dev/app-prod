@@ -196,7 +196,7 @@ export const DetailFormAddTransaction = () => {
       products: products ?? [],
       ...((products?.length as number) > 0 ? { location_id: products?.[0].location_id } : null),
       packages: packages ?? [],
-      notes: "Combined purchase",
+      notes: (cartItems ?? []).map((item) => `${item.name} x${item.quantity}`).join(", "),
       status: "paid",
       payment_method: selectedPaymentMethod,
 
