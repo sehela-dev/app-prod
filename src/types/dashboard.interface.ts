@@ -30,10 +30,18 @@ export interface IMembers {
   previous_month_new: string;
 }
 
+export interface IBirthdayStudent {
+  id: string;
+  full_name: string;
+  date_of_birth: string;
+  age: number;
+}
+
 export interface IOverviewDashboard {
   revenue: IRevenue;
   orders: IOrders;
   members: IMembers;
+  birthdays_today: IBirthdayStudent[];
 }
 
 export interface IOverallResult {

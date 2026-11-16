@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Divider } from "@/components/ui/divider";
 import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useGetDashboardOverview, useGetDashboardProductPerformance } from "@/hooks/api/queries/admin/dashboard";
 import { useGetDashboardSessionPerformance } from "@/hooks/api/queries/admin/dashboard/use-get-dashboard-session-performance";
 import { useGetDashboardNearlyExpired } from "@/hooks/api/queries/admin/dashboard/use-get-nearly-expired";
@@ -16,6 +17,8 @@ import { formatCurrency, formatDateHelper, splitArray } from "@/lib/helper";
 import { cn } from "@/lib/utils";
 import { INearlyExpiredCreditPackage, IOverallResultByClass } from "@/types/dashboard.interface";
 import { ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, CircleDollarSign, File, Loader2, Package, Users, WalletCards } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Fragment, useMemo, useState } from "react";
 
 const filterOption = [
@@ -42,7 +45,8 @@ const filterOption = [
 ];
 
 export const DashboardPage = () => {
-  const { data: dashboardOverView, isLoading: isLoadingOverview } = useGetDashboardOverview();
+  const router = useRouter();
+  const { data: dashboardOverView, isLoading: isLoadingOverview, isError: isErrorOverview } = useGetDashboardOverview();
   const { data: dashboardOverViewPerformance, isLoading: isLoadingOverviewPerformance } = useGetDashboardSessionPerformance();
   const { data: dashboardOverViewProduct, isLoading: isLoadingOverviewProduct } = useGetDashboardProductPerformance();
   const [selectedFilter, setSelectedFilter] = useState("last_1_day");
@@ -125,6 +129,8 @@ export const DashboardPage = () => {
       }
     }
   };
+
+  const birthdaysToday = dashboardOverView?.data?.birthdays_today ?? [];
 
   const headers = [
     {
@@ -236,6 +242,55 @@ export const DashboardPage = () => {
             // percentage={10}
           />
         </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-col">
+          <h3 className="text-2xl font-semibold">Birthdays Today</h3>
+          <p className="text-gray-500 text-sm">Active students celebrating a birthday today, in WIB.</p>
+        </div>
+        <Card>
+          <CardContent>
+            {isErrorOverview ? (
+              <p className="text-sm text-red-600">Could not load birthdays. Refresh the page to try again.</p>
+            ) : birthdaysToday.length === 0 ? (
+              <p className="text-sm text-gray-500">No student birthdays today.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Member</TableHead>
+                    <TableHead>Birth date</TableHead>
+                    <TableHead className="text-right">Age</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {birthdaysToday.map((student) => (
+                    <TableRow
+                      key={student.id}
+                      className="cursor-pointer"
+                      onClick={() => router.push(`/admin/member/${student.id}`)}
+                    >
+                      <TableCell className="whitespace-normal">
+                        <Link
+                          href={`/admin/member/${student.id}`}
+                          onClick={(event) => event.stopPropagation()}
+                          className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {student.full_name}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-gray-500">
+                        {formatDateHelper(student.date_of_birth, "dd MMM yyyy")}
+                      </TableCell>
+                      <TableCell className="text-right text-gray-500">{student.age}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <div className="flex flex-col gap-2">
