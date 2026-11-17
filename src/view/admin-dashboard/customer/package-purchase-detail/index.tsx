@@ -387,7 +387,7 @@ export const PackagePurchaseDetailPage = () => {
       <HistoryTable
         title="Credit ledger history"
         emptyText="No ledger entries were recorded for this purchase."
-        headers={["Date (WIB)", "Type", "Amount", "Session", "Spender", "Note"]}
+        headers={["Date (WIB)", "Type", "Amount", "Session", "Session date (WIB)", "Spender", "Note"]}
       >
         {purchase.ledger_history.map((entry) => (
           <TableRow key={entry.id}>
@@ -409,6 +409,13 @@ export const PackagePurchaseDetailPage = () => {
                 </a>
               ) : entry.booking_session_name ? (
                 <span className="font-medium">{entry.booking_session_name}</span>
+              ) : (
+                <span className="text-muted-foreground">-</span>
+              )}
+            </TableCell>
+            <TableCell className="whitespace-normal">
+              {entry.booking_session_start_at ? (
+                <span>{formatJakarta(entry.booking_session_start_at)}</span>
               ) : (
                 <span className="text-muted-foreground">-</span>
               )}
