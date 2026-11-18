@@ -55,7 +55,9 @@ export const CompleteProfilePageView = () => {
   const fallback = typeof window !== "undefined" ? new URL(window.location.href).searchParams : null;
   const token = rawToken ?? fallback?.get("token") ?? fallback?.get("code") ?? null;
   const emailParam = rawEmail ?? fallback?.get("email") ?? null;
-  const isTokenMode = !!token && !!emailParam;
+  // ponytail: token alone decides token mode — the email in the link is display-only
+  // and mail clients sometimes drop its dot (seen in prod), so never gate on it.
+  const isTokenMode = !!token;
   // BE contract: preserve booking intent via ?next (alias ?redirect)
   const rawNext = searchParams.get("next") ?? searchParams.get("redirect") ?? fallback?.get("next") ?? fallback?.get("redirect") ?? null;
   const normalizeNext = (v: string) => (v === "/booking" ? "/book" : v);
@@ -81,7 +83,9 @@ export const CompleteProfilePageView = () => {
   } = useVerifyCompleteProfile(emailParam, token, isTokenMode);
 
   const verifyErrorCode = (verifyError as { response?: { data?: { error?: { code?: string } } } })?.response?.data?.error?.code;
-  const isInvalidToken = verifyErrorCode === "INVALID_TOKEN";
+  // verify resolves the email from the token record; fall back to the link only if the BE is older
+  const verifiedEmail = (verifyData as { data?: { email?: string } } | undefined)?.data?.email ?? emailParam;
+  const isInvalidToken = ["INVALID_TOKEN", "TOKEN_NOT_FOUND", "TOKEN_EXPIRED", "TOKEN_ALREADY_USED"].includes(verifyErrorCode ?? "");
 
   // countdown from expires_at
   const expiresAt = (verifyData as { data?: { expires_at?: string } })?.data?.expires_at;
@@ -125,9 +129,9 @@ export const CompleteProfilePageView = () => {
   };
 
   const handleResend = async () => {
-    if (!emailParam) return;
+    if (!verifiedEmail) return;
     try {
-      await resendRegistration({ email: emailParam });
+      await resendRegistration({ email: verifiedEmail });
       toast.success("New link sent", { description: "Check your email for a new 15m link.", position: "top-center" });
       refetchVerify();
     } catch (e: unknown) {
@@ -141,7 +145,7 @@ export const CompleteProfilePageView = () => {
     if (isTokenMode) {
       const v = verifyData as { data?: { full_name?: string; email?: string } } | undefined;
       return {
-        email: emailParam ?? "",
+        email: v?.data?.email ?? emailParam ?? "",
         full_name: v?.data?.full_name ?? "",
         password: "",
         phone: "",
@@ -188,13 +192,13 @@ export const CompleteProfilePageView = () => {
 
   const onSubmit = handleSubmit(async (data) => {
     if (isTokenMode) {
-      if (!token || !emailParam) return;
+      if (!token) return;
       if (isExpired) {
         toast.error("Link expired", { description: "Link expired (15m), request a new one.", position: "top-center" });
         return;
       }
       const payload = {
-        email: emailParam,
+        ...(verifiedEmail ? { email: verifiedEmail } : {}),
         token,
         full_name: data.full_name || undefined,
         phone: data.phone || undefined,

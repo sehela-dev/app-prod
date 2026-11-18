@@ -60,8 +60,11 @@ export const userCompleteProfile: TAuthCompleteProfile = async (data) => {
   return res.data;
 };
 
-export const verifyCompleteProfileToken = async (email: string, token: string) => {
-  const res = await axiosx(false).get(`${MAIN_API_URL}/auth/complete-profile/verify`, { params: { email: normEmail(email), token } });
+export const verifyCompleteProfileToken = async (email: string | null | undefined, token: string) => {
+  // Email is optional: the token identifies the record, and mail clients can mangle the link email.
+  const res = await axiosx(false).get(`${MAIN_API_URL}/auth/complete-profile/verify`, {
+    params: { ...(email ? { email: normEmail(email) } : {}), token },
+  });
   return res.data;
 };
 
