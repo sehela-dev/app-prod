@@ -201,7 +201,7 @@ export const OrdersReportView = () => {
       text: "Product Name",
       value: (row: IOrdersReportRow) =>
         row.productName ? (
-          <p className="max-w-56 truncate" title={row.productName}>
+          <p className="max-w-56 whitespace-normal break-words" title={row.productName}>
             {row.productName}
           </p>
         ) : (
