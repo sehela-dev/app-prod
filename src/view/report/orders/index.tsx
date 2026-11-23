@@ -33,8 +33,16 @@ const TRANSACTION_TYPES = [
   { value: "package", label: "Package" },
   { value: "class", label: "Class" },
   { value: "product", label: "Product" },
+  { value: "product-sale", label: "Product Sale" },
+  { value: "product-rent", label: "Product Rent" },
   { value: "mixed", label: "Mixed" },
 ];
+
+const productTypeClass: Record<string, string> = {
+  sale: "border-green-200 bg-green-50 text-green-700",
+  rental: "border-blue-200 bg-blue-50 text-blue-700",
+  "sale, rental": "border-amber-200 bg-amber-50 text-amber-700",
+};
 
 const transactionTypeClass: Record<string, string> = {
   package: "border-violet-200 bg-violet-50 text-violet-700",
@@ -204,6 +212,18 @@ export const OrdersReportView = () => {
           <p className="max-w-56 whitespace-normal break-words" title={row.productName}>
             {row.productName}
           </p>
+        ) : (
+          "-"
+        ),
+    },
+    {
+      id: "productType",
+      text: "Product Type",
+      value: (row: IOrdersReportRow) =>
+        row.productType ? (
+          <Badge variant="outline" className={cn("capitalize", productTypeClass[row.productType.toLowerCase()])}>
+            {row.productType}
+          </Badge>
         ) : (
           "-"
         ),

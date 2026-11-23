@@ -517,6 +517,7 @@ export interface IOrdersReportRow {
   paymentType: string;
   admin: string;
   productName: string;
+  productType: string;
   salesStatus: string;
   notes: string;
   transactionType: string;
