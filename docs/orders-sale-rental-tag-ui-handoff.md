@@ -4,7 +4,7 @@
 **Source BE:** `supabase/functions/admin/_shared/orders_report.ts` (`joinProductNames`)
 **Source FE:** `src/view/report/orders/index.tsx` (kolom `Product Name`)
 **Endpoints:** `GET /admin/orders` (preview) + `GET /admin/orders/export` (CSV)
-**Status:** UI change ada di repo ini (app-prod); perubahan BE **belum deploy** ke dev/prod.
+**Status:** live dev (`admin` v356) + prod (`admin` v85) + FE app-prod, 2026-11-23.
 **Last Updated:** 2026-11-23
 
 ---
