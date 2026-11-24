@@ -526,6 +526,8 @@ export interface IOrdersReportRow {
   voucherCode: string;
   commissionFee: number;
   sourcePlatform: string;
+  balanceDue: number;
+  balanceDueDate: string;
   commisionPct?: number | null; // BE spelling (single-s); percent, 15 = 15%
   commissionPct?: number | null;
   commissionPercentage?: number | null;

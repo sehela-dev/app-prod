@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { IOrdersReportRow } from "@/types/report.interface";
 import { format } from "date-fns";
 import { id as localeId } from "date-fns/locale";
-import { Banknote, CreditCard, Download, Landmark, Loader2, Package, Zap, type LucideIcon } from "lucide-react";
+import { Banknote, Clock, CreditCard, Download, Landmark, Loader2, Package, Zap, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -27,6 +27,8 @@ const PAYMENT_TYPES = [
   { value: "transfer", label: "Transfer" },
   { value: "midtrans", label: "Midtrans" },
   { value: "third_party", label: "Third Party" },
+  { value: "paylater", label: "Paylater" },
+  { value: "dp", label: "DP" },
 ];
 
 const TRANSACTION_TYPES = [
@@ -80,6 +82,7 @@ const salesStatusClass = (status?: string) => {
       return "border-red-200 bg-red-50 text-red-600";
     case "unpaid":
     case "pending":
+    case "partial":
       return "border-amber-200 bg-amber-50 text-amber-700";
     default:
       return "";
@@ -92,6 +95,8 @@ const paymentTypeStyle: Record<string, { className: string; icon: LucideIcon }> 
   transfer: { className: "border-blue-200 bg-blue-50 text-blue-700", icon: Landmark },
   midtrans: { className: "border-violet-200 bg-violet-50 text-violet-700", icon: Zap },
   third_party: { className: "border-cyan-200 bg-cyan-50 text-cyan-700", icon: Package },
+  paylater: { className: "border-orange-200 bg-orange-50 text-orange-700", icon: Clock },
+  dp: { className: "border-sky-200 bg-sky-50 text-sky-700", icon: Banknote },
 };
 
 const errorMessage = async (e: unknown, fallback: string) => {
@@ -302,6 +307,19 @@ export const OrdersReportView = () => {
       id: "totalPaid",
       text: "Total Paid",
       value: (row: IOrdersReportRow) => <span className="font-medium whitespace-nowrap">{formatCurrency(row.totalPaid)}</span>,
+    },
+    {
+      id: "balanceDue",
+      text: "Balance Due",
+      value: (row: IOrdersReportRow) =>
+        (row.balanceDue ?? 0) > 0 ? (
+          <div className="flex flex-col whitespace-nowrap">
+            <span className="font-medium text-amber-700">{formatCurrency(row.balanceDue)}</span>
+            <span className="text-xs text-muted-foreground">{row.balanceDueDate || "-"}</span>
+          </div>
+        ) : (
+          <span className="text-muted-foreground">–</span>
+        ),
     },
   ];
 

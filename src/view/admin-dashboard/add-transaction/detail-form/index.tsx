@@ -44,6 +44,14 @@ export const PAYMENT_METHODS = [
     label: "Bank Transfer",
     value: "transfer",
   },
+  {
+    label: "Paylater",
+    value: "paylater",
+  },
+  {
+    label: "DP",
+    value: "dp",
+  },
 ];
 export const DetailFormAddTransaction = () => {
   const router = useRouter();
@@ -60,6 +68,9 @@ export const DetailFormAddTransaction = () => {
   const [branchError, setBranchError] = useState<string | null>(null);
   const [transactionDate, setTransactionDate] = useState("");
   const [transactionDateError, setTransactionDateError] = useState<string | null>(null);
+  const [dpPercent, setDpPercent] = useState("");
+  const [balanceDueDate, setBalanceDueDate] = useState("");
+  const [termError, setTermError] = useState<string | null>(null);
 
   useEffect(() => {
     if (customerData?.branch && !selectedBranch) {
@@ -139,6 +150,29 @@ export const DetailFormAddTransaction = () => {
     return tempTp ?? 0;
   }, [cartItems]);
 
+  const finalTotal = discountData?.final_amount ?? totalPrice;
+  const hasNonSessionItems = useMemo(
+    () => (cartItems ?? []).some((item) => item.type !== "class"),
+    [cartItems],
+  );
+  const termSelected = selectedPaymentMethod === "paylater" || selectedPaymentMethod === "dp";
+  const availablePaymentMethods = hasNonSessionItems
+    ? PAYMENT_METHODS.filter((m) => ["cash", "edc", "transfer"].includes(m.value))
+    : PAYMENT_METHODS;
+  const payNow =
+    selectedPaymentMethod === "paylater"
+      ? 0
+      : selectedPaymentMethod === "dp"
+        ? Math.round((finalTotal * (Number(dpPercent) || 0)) / 100)
+        : finalTotal;
+
+  useEffect(() => {
+    if (hasNonSessionItems && termSelected) {
+      setSelectPaymentMethod("cash");
+      setTermError(null);
+    }
+  }, [hasNonSessionItems, termSelected]);
+
   const onCancel = () => {
     setOpen(false);
     router.push("/admin/orders");
@@ -148,6 +182,25 @@ export const DetailFormAddTransaction = () => {
     if (!branchValue) {
       setBranchError("Branch is required");
       return;
+    }
+
+    if (termSelected) {
+      if (hasNonSessionItems) {
+        setTermError("Paylater/DP hanya untuk booking sesi.");
+        return;
+      }
+      if (!balanceDueDate) {
+        setTermError("Balance due date wajib diisi.");
+        return;
+      }
+      if (selectedPaymentMethod === "dp") {
+        const pct = Number(dpPercent);
+        if (!Number.isInteger(pct) || pct < 1 || pct > 99) {
+          setTermError("DP % harus 1-99.");
+          return;
+        }
+      }
+      setTermError(null);
     }
 
     const today = todayWIB();
@@ -199,6 +252,12 @@ export const DetailFormAddTransaction = () => {
       notes: (cartItems ?? []).map((item) => `${item.name} x${item.quantity}`).join(", "),
       status: "paid",
       payment_method: selectedPaymentMethod,
+      ...(termSelected
+        ? {
+            balance_due_date: balanceDueDate,
+            ...(selectedPaymentMethod === "dp" ? { dp_percent: Number(dpPercent) } : null),
+          }
+        : null),
 
       ...(selectedPaymentMethod === "transfer"
         ? {
@@ -659,7 +718,7 @@ export const DetailFormAddTransaction = () => {
                     value={selectedPaymentMethod}
                     onValueChange={(e) => setSelectPaymentMethod(e)}
                   >
-                    {PAYMENT_METHODS.map((option) => (
+                    {availablePaymentMethods.map((option) => (
                       <div key={option.value} className="flex items-center space-x-2">
                         <RadioGroupItem value={option.value} id={option.value} />
                         <Label htmlFor={option.value} className="text-sm font-medium text-brand-999 cursor-pointer">
@@ -668,14 +727,49 @@ export const DetailFormAddTransaction = () => {
                       </div>
                     ))}
                   </RadioGroup>
+                  {termSelected && (
+                    <div className="flex flex-col gap-1">
+                      {selectedPaymentMethod === "dp" && (
+                        <div className="flex flex-col gap-1 mt-2">
+                          <Label className="text-gray-500">DP (%)</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={99}
+                            className="w-full px-4 py-4 border-2 border-gray-200 rounded-lg text-gray-999 placeholder-gray-400 focus:outline-none focus:border-brand-500 transition-colors h-[42px]"
+                            placeholder="50"
+                            value={dpPercent}
+                            onChange={(e) => setDpPercent(e.target.value)}
+                          />
+                        </div>
+                      )}
+                      <div className="flex flex-col gap-1 mt-2">
+                        <Label className="text-gray-500">Balance Due Date</Label>
+                        <Input
+                          type="date"
+                          className="w-full px-4 py-4 border-2 border-gray-200 rounded-lg text-gray-999 placeholder-gray-400 focus:outline-none focus:border-brand-500 transition-colors h-[42px]"
+                          value={balanceDueDate}
+                          onChange={(e) => setBalanceDueDate(e.target.value)}
+                        />
+                      </div>
+                      {termError && <p className="text-xs text-red-500">{termError}</p>}
+                    </div>
+                  )}
                   <div className="flex flex-col gap-2">
                     <div className="flex flex-col gap-1 mt-2">
-                      <Label className="text-gray-500">Pay Amount</Label>
+                      <Label className="text-gray-500">
+                        {termSelected ? "Collected Now" : "Pay Amount"}
+                      </Label>
                       <Input
                         className="w-full px-4 py-4 border-2 border-gray-200 rounded-lg text-gray-999  placeholder-gray-400 focus:outline-none focus:border-brand-500 transition-colors h-[42px]"
-                        value={!discountData ? formatCurrency(totalPrice) : formatCurrency(discountData?.final_amount)}
+                        value={formatCurrency(payNow)}
                         readOnly
                       />
+                      {termSelected && (
+                        <p className="text-xs text-gray-500">
+                          Balance: {formatCurrency(finalTotal - payNow)}
+                        </p>
+                      )}
                     </div>
                     {selectedPaymentMethod === "transfer" && (
                       <div className="flex flex-col gap-1">
