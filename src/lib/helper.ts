@@ -391,7 +391,7 @@ export function getDurationInMinutes(startTime: string, endTime: string): string
 
 export const reminderMessage = (name: string, session: string, schedule: string, studio: string) => {
   return `Hi Kak ${name}
-Kelas ${session} mulai 30 menit lagi (${schedule}, ${studio}).
+Kelas *${session}* mulai 30 menit lagi (*${schedule}*, *${studio}*).
 
 Quick reminder ya Kak:
 • Datang 10 menit lebih awal & check-in di resepsionis
