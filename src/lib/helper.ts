@@ -390,25 +390,15 @@ export function getDurationInMinutes(startTime: string, endTime: string): string
 // };
 
 export const reminderMessage = (name: string, session: string, schedule: string, studio: string) => {
-  return `Hi Kak *${name.toUpperCase()}*!
+  return `Hi Kak ${name}! 🧘‍♀️
+Kelas ${session} mulai 30 menit lagi (${schedule}, ${studio}).
 
-Kami ingin mengingatkan bahwa Kakak terdaftar di kelas:
+Quick reminder ya Kak:
+✅ Datang 10 menit lebih awal & check-in di resepsionis
+⏰ Toleransi telat maks. 10 menit setelah kelas mulai
+🧘 Matras studio tersedia, tapi boleh bawa sendiri juga ya
 
-*${session.toUpperCase()}*
-*${schedule}*
-*${studio}*
-
-Kelas akan dimulai dalam 60 menit.
-
-Mohon hadir 10 menit sebelum jadwal kelas agar Kakak memiliki waktu untuk mempersiapkan diri di studio.
-
-Jangan lupa melakukan registrasi di meja resepsionis sebelum masuk ke kelas.
-
-Kami ingatkan kembali bahwa batas maksimal keterlambatan untuk mengikuti kelas adalah 10 menit setelah kelas dimulai.
-
-Matras tersedia di dalam studio. Mohon dirapikan kembali setelah digunakan.
-
-Terima kasih dan sampai jumpa! :)`;
+See you! 💛`;
 };
 
 export const sendReminder = (phone: string, msg: string) => {
